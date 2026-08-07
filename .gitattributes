@@ -1,0 +1,23 @@
+# 统一换行策略：文本文件一律 LF（仓库与工作区一致），消除 CRLF 假阳性
+* text=auto eol=lf
+
+# Windows 脚本保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不做换行处理
+*.jks binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.apk binary
+*.jar binary
+*.aab binary
