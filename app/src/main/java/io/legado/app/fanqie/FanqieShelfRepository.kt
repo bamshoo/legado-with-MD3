@@ -57,13 +57,6 @@ object FanqieShelfRepository {
         return FanqieSyncResult(added, updated, removed, cloudBooks.size)
     }
 
-    suspend fun isInLocalShelf(bookId: String): Boolean {
-        val groupId = FanqieGroup.ensureGroup()
-        val bookUrl = FanqieConstants.pageUrl(bookId)
-        val book = bookDao.getBook(bookUrl) ?: findByBookId(bookId)
-        return book?.group?.and(groupId) != 0L
-    }
-
     suspend fun addToLocalShelf(bookId: String): Boolean {
         val groupId = FanqieGroup.ensureGroup()
         val bookUrl = FanqieConstants.pageUrl(bookId)

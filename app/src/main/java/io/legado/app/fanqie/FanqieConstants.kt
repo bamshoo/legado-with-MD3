@@ -2,7 +2,7 @@ package io.legado.app.fanqie
 
 object FanqieConstants {
 
-    const val DOMAIN = "fanqienovel.com"
+    private const val DOMAIN = "fanqienovel.com"
     const val BASE_URL = "https://$DOMAIN"
     const val ORIGIN_NAME = "番茄小说"
 
@@ -31,6 +31,4 @@ object FanqieConstants {
         if (bookUrl.isNullOrBlank()) return null
         return BOOK_ID_REGEX.matchEntire(bookUrl.trim())?.groupValues?.get(1)
     }
-
-    fun isFanqieBook(bookUrl: String?): Boolean = parseBookId(bookUrl) != null
 }

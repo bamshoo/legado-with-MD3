@@ -8,8 +8,6 @@ object FanqieGroup {
 
     private const val ID_FALLBACK = 1L shl 40
 
-    fun currentGroupId(): Long = FanqieConfig.groupId
-
     fun isFanqieGroup(groupId: Long): Boolean {
         val current = FanqieConfig.groupId
         return current > 0 && groupId == current

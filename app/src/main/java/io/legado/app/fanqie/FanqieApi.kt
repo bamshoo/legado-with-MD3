@@ -74,7 +74,7 @@ object FanqieApi {
     fun hasCookie(): Boolean =
         CookieStore.getCookie(FanqieConstants.BASE_URL).isNotBlank()
 
-    fun csrfToken(): String {
+    private fun csrfToken(): String {
         val cookie = CookieStore.getCookie(FanqieConstants.BASE_URL)
         for (part in cookie.split(";")) {
             val kv = part.trim().split("=", limit = 2)

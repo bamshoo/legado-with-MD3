@@ -53,7 +53,7 @@ class FanqieViewModel : ViewModel() {
         viewModelScope.launch {
             FanqieApi.refreshLoginState()
             _uiState.update {
-                it.copy(loading = true, error = null, syncing = false)
+                it.copy(loading = true, error = null)
             }
             if (!FanqieApi.isLoggedIn()) {
                 _uiState.update {
@@ -110,7 +110,7 @@ class FanqieViewModel : ViewModel() {
 
     private fun syncNow() {
         viewModelScope.launch {
-            _uiState.update { it.copy(syncing = true, error = null) }
+            _uiState.update { it.copy(error = null) }
             runCatching { FanqieShelfRepository.syncFromCloud() }
                 .onSuccess { result ->
                     _effects.tryEmit(
@@ -122,9 +122,9 @@ class FanqieViewModel : ViewModel() {
                 }
                 .onFailure { e ->
                     if (e is FanqieAuthException) {
-                        _uiState.update { it.copy(syncing = false, loggedIn = false, error = e.message) }
+                        _uiState.update { it.copy(loggedIn = false, error = e.message) }
                     } else {
-                        _uiState.update { it.copy(syncing = false, error = e.message) }
+                        _uiState.update { it.copy(error = e.message) }
                     }
                     _effects.tryEmit(FanqieEffect.ShowToast("同步失败：${e.message}"))
                 }
@@ -208,7 +208,6 @@ class FanqieViewModel : ViewModel() {
         name = name.ifBlank { "未命名" },
         author = author,
         coverUrl = coverUrl,
-        latestChapterTitle = latestChapterTitle,
         totalChapterNum = totalChapterNum,
         readChapterIndex = readChapterIndex,
         inLocalShelf = FanqieConstants.pageUrl(bookId) in localUrls ||
