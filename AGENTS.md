@@ -1,417 +1,41 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+本文件为在此仓库中工作的 AI 编程代理（如 Codex、opencode 等）提供指引。**编码规则与约束见下文，项目详细说明见 `docs/agents/` 参考文档。**
 
-## Coding Guidelines
+## 项目概览
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+Legado 的 **Material Design 3 分支**（阅读器 App）。三层 Clean Architecture（Data/Domain/UI），View 向 Compose 迁移中。功能详情见下表文档：
 
-### Think Before Coding
+| 主题 | 文档 |
+|---|---|
+| 架构（三层、顶层包、模块、混合 Compose+View、Rhino JS 引擎） | `docs/agents/architecture.md` |
+| 依赖注入（Koin） | `docs/agents/koin-di.md` |
+| 导航（Navigation 3） | `docs/agents/navigation.md` |
+| 主题系统（M3 Expressive / Miuix） | `docs/agents/theme-system.md` |
+| Compose 界面开发规范（MVI/UDF 模板与示例代码） | `docs/agents/compose-guidelines.md` |
+| 番茄小说云同步集成（feature/fanqie-sync 分支） | `docs/agents/fanqie-sync.md` |
 
-- State assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them — don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+## 编码指南
 
-### Simplicity First
+**权衡原则：** 以下准则偏向谨慎而非速度。对琐碎任务可用判断力。
 
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
+### 编码前思考
 
-### Surgical Changes
-
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it — don't delete it.
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-### Settings Gateway Conventions
-
-- Ordinary settings gateways mutate state through `update { current -> current.copy(...) }`.
-- Do not introduce `*SettingsUpdate` dispatch types or `updateAll` on settings gateways.
-- Submit related multi-field changes in one `copy(...)` transform so the SSOT can apply them atomically.
-- Keep specialized APIs such as `ReadStyleMutation`, `ThemePackageSettingsGateway.applyAndAwait`,
-  `ThemeStateTransaction`, and `AppUiConfigurationGateway` in their dedicated shapes.
-
-### Goal-Driven Execution
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-## Build / Test / Run
-
-```bash
-# Quick compile check (Kotlin only, no dex/package — fastest for verifying code compiles)
-.\gradlew.bat :app:compileAppDebugKotlin
-
-# Assemble all variants
-./gradlew assembleAppRelease
-
-# Assemble without R8 (for crash debugging — no minification/shrinking)
-./gradlew assembleAppNoR8
-
-# Debug build
-./gradlew assembleAppDebug
-
-# Run unit tests (JVM, local)
-./gradlew test
-
-# Run a single test class
-./gradlew test --tests "io.legado.app.model.cache.CacheDownloadQueueTest"
-
-# Run connected Android tests
-./gradlew connectedAndroidTest
-
-# Lint
-./gradlew lint
-
-# Update Cronet (after changing CronetVersion in gradle.properties)
-./gradlew app:downloadCronet
-```
-
-The project uses JDK 21 for development (set in `build.gradle.kts` via `jvmToolchain`). CI uses JDK 17 for building.
-
-Gradle properties: 8 GB heap, configuration cache disabled (`gradle.properties:31`), non-transitive R classes, precise resource shrinking enabled.
-
-## Architecture
-
-This is a Material Design 3 fork of [Legado](https://github.com/gedoor/legado). `app/src/main/java/io/legado/app/` uses **Clean Architecture** with three layers:
-
-| Layer | Package | Role |
-|---|---|---|
-| Data | `data/` | Room DB (`AppDatabase`, version 85, ~22 DAOs, ~25 entities), repository implementations |
-| Domain | `domain/` | Gateway interfaces, use cases (14), domain models — no framework dependencies |
-| UI | `ui/` | Jetpack Compose screens, Navigation 3 routes, ViewModels |
-
-Additional top-level packages:
-- **`help/`** — Infrastructure "glue": HTTP (OkHttp + Cronet), book content processing, backup/WebDAV, JS engine, config
-- **`model/`** — Runtime state coordinators (not entities): `ReadBook`, `AudioPlay`, `CacheBook`, `BookCover`, etc.
-- **`service/`** — Android foreground/background services (audio playback, TTS, download, web server)
-- **`web/`** — Embedded HTTP server (Ktor) for remote bookshelf/source editing
-- **`lib/`** — Third-party library wrappers (MOBI parser, WebDAV client, legacy View theme system, cronet)
-- **`base/`** — Abstract Activity/Fragment/ViewModel base classes
-- **`utils/`** — Extension functions and utility classes (~70 files)
-
-Modules: `:app`, `:modules:book` (epub/TXT parsing, namespace `me.ag2s`), `:modules:rhino` (Rhino JS wrapper, namespace `com.script`). There is also a Vue 3 web frontend in `modules/web/` (pnpm, separate from the Android build).
-
-## Dependency Injection (Koin)
-
-Two modules loaded in `App.onCreate()`:
-
-```kotlin
-startKoin {
-    modules(appDatabaseModule, appModule)
-}
-```
-
-- **`di/appDatabaseModule.kt`** — Singleton `AppDatabase` + factory bindings for all 22 DAOs
-- **`di/appModule.kt`** — Singletons (repositories, use cases, gateways, Coil `ImageLoader`), `viewModelOf` / `viewModel { }` for all ViewModels, some parameterized definitions
-
-Gateways are bound to their repository implementations explicitly (e.g., `single<LocalBookGateway> { LocalBookRepository(get()) }`), not through `singleOf`.
-
-## Navigation
-
-Uses **Jetpack Navigation 3** (`androidx.navigation3`) with type-safe `@Serializable` sealed interfaces for route keys:
-
-```kotlin
-@Serializable
-private sealed interface MainRoute : NavKey
-@Serializable
-private data object MainRouteHome : MainRoute
-@Serializable
-private data class MainRouteCache(val groupId: Long) : MainRoute
-```
-
-`MainActivity` holds a single `NavDisplay` with `entryProvider { ... }` defining all composable entries. `Launcher0` through `LauncherW` extend `MainActivity` to provide multiple launcher icon alias entries. Separate activities handle the reader (`ReadBookActivity` — still View-based), book info, source management, replace rules, file manager, QR scanner, etc.
-
-## Theme System
-
-A multi-engine theming system in `ui/theme/`:
-
-1. **Material 3 Expressive** (default): Uses `MaterialExpressiveTheme` with `MotionScheme.expressive()`
-2. **Miuix** (alternative): Uses `top.yukonga.miuix.kmp` theming engine
-
-14 theme modes (`AppThemeMode` enum) — Dynamic (Monet), 12 named presets, Custom (MaterialKolor seed-color generation), Transparent. `CustomColorScheme` wraps `com.materialkolor` with configurable `PaletteStyle` (TonalSpot, Neutral, Vibrant, Expressive, Rainbow, etc.) and `ColorSpec` (2021 vs 2025).
-
-Legacy View-based theme still exists in `lib/theme/` (used by non-migrated screens like `ReadBookActivity`).
-
-## Hybrid Compose + View
-
-The app is mid-migration from Views to Compose. View-based screens (reader, book info, source management) coexist with Compose screens (main tabs, settings, search, RSS, cache management). XML layouts, `viewBinding`, and traditional Activities are still heavily used. The `viewBinding` build feature is enabled but Compose screens are the target.
-
-## Jetpack Compose Requirements (new screens MUST follow)
-
-All **new** UI screens must be implemented in Jetpack Compose following the patterns below. Do **not
-** create new View-based Activities/Fragments/XML layouts. Existing View-based screens can remain
-until migrated.
-
-### MVI/UDF Architecture
-
-Every Compose screen follows a strict **Model-View-Intent** pattern with three artifacts defined in
-a `*Contract.kt` file:
-
-```
-ui/{feature}/
-├── XxxContract.kt      // UiState, Intent, Effect (and optionally Sheet/Dialog)
-├── XxxViewModel.kt     // ViewModel
-├── XxxScreen.kt        // Screen composable
-└── XxxRouteScreen.kt   // (optional) outer wrapper for activity results / lifecycle
-```
-
-**Contract definitions:**
-
-```kotlin
-// @Stable data class — all screen state in one place
-@Stable
-data class XxxUiState(
-    val loading: Boolean = false,
-    val items: ImmutableList<ItemUi> = persistentListOf(),
-    val activeSheet: XxxSheet? = null,
-    val activeDialog: XxxDialog? = null,
-)
-
-// sealed interface — every user action is an Intent
-sealed interface XxxIntent {
-    data class LoadData(val id: Long) : XxxIntent
-    data object Refresh : XxxIntent
-}
-
-// sealed interface — one-shot side effects (navigation, toast, etc.)
-sealed interface XxxEffect {
-    data class ShowToast(val message: String) : XxxEffect
-    data class NavigateTo(val route: MainRoute) : XxxEffect
-}
-
-// (optional) sealed interface for multi-sheet/dialog scenarios
-sealed interface XxxSheet { data object Filter : XxxSheet }
-sealed interface XxxDialog { data class Confirm(val msg: String) : XxxDialog }
-```
-
-**Naming rules:**
-
-- State: `{Feature}UiState` — `@Stable data class`
-- Intent: `{Feature}Intent` — `sealed interface` with `data class` / `data object` members
-- Effect: `{Feature}Effect` — `sealed interface`
-- Sheet/Dialog: `{Feature}Sheet`, `{Feature}Dialog` — `sealed interfaces` stored in UiState
-
-### ViewModel
-
-```kotlin
-class XxxViewModel(/* injected dependencies */) : ViewModel() {
-
-    private val _uiState = MutableStateFlow(XxxUiState())
-    val uiState = _uiState.asStateFlow()
-
-    private val _effects = MutableSharedFlow<XxxEffect>(extraBufferCapacity = 16)
-    val effects = _effects.asSharedFlow()
-
-    fun onIntent(intent: XxxIntent) {
-        when (intent) {
-            is XxxIntent.LoadData -> loadData(intent.id)
-            is XxxIntent.Refresh -> refresh()
-        }
-    }
-
-    private fun loadData(id: Long) {
-        // Use viewModelScope, update _uiState via update { it.copy(...) }
-    }
-}
-```
-
-Key rules:
-
-- Extend `ViewModel()` directly (not `BaseViewModel`).
-- `_uiState` is `MutableStateFlow`, exposed as `StateFlow` via `.asStateFlow()`.
-- `_effects` is `MutableSharedFlow(extraBufferCapacity = 16)`, exposed via `.asSharedFlow()`.
-- Emit effects via `_effects.tryEmit(...)`.
-- Single `onIntent()` entry point, dispatched via `when`.
-
-### Screen Composable
-
-```kotlin
-// Stateless screen — ViewModel wired in entry provider or RouteScreen
-@Composable
-fun XxxScreen(
-    state: XxxUiState,
-    onIntent: (XxxIntent) -> Unit,
-    effects: Flow<XxxEffect>,                   // one-shot effects from ViewModel
-    onBack: () -> Unit,
-    onNavigateToYyy: (YyyRoute) -> Unit,
-) {
-    // Collect effects
-    LaunchedEffect(Unit) {
-        effects.collectLatest { effect ->
-            when (effect) {
-                is XxxEffect.ShowToast -> { /* ... */ }
-                is XxxEffect.NavigateTo -> onNavigateToYyy(effect.route)
-            }
-        }
-    }
-
-    AppScaffold(
-        topBar = {
-            GlassMediumFlexibleTopAppBar(
-                title = { Text("Title") },
-                scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior(),
-                navigationButton = { TopBarNavigationButton(onBack) },
-            )
-        },
-    ) { contentPadding ->
-        // UI content, no business logic here
-    }
-}
-```
-
-Key rules:
-
-- Screen is **stateless** — receives `state`, `onIntent`, `effects`, never accesses ViewModel
-  directly.
-- Effects collected in `LaunchedEffect(Unit) { ... }` using `collectLatest`.
-- Alternatively, effects can be collected in the outer `RouteScreen` or entry provider if the screen
-  doesn't need them directly.
-- Use project custom widgets: `AppScaffold`, `AppText`, `AppIcon`, `AppIcons`, `AppAlertDialog`,
-  `AppModalBottomSheet`, `NormalCard`, `GlassMediumFlexibleTopAppBar`, `TopBarNavigationButton`,
-  `TopBarActionButton`, etc.
-- No business logic, no direct DB/network calls in composables.
-
-Two input patterns are acceptable:
-
-- **Stateless (preferred for new screens):** `state: XxxUiState` + `onIntent: (XxxIntent) -> Unit` —
-  ViewModel wired in entry provider or RouteScreen.
-- **ViewModel as default param:** `viewModel: XxxViewModel = koinViewModel()` — simpler for
-  standalone screens.
-
-### Stability
-
-- All `UiState` and UI item data classes **must** be annotated with `@Stable`.
-- Use `ImmutableList` (from `kotlinx.collections.immutable`) for list properties in state classes,
-  not `List` or `MutableList`.
-- Prefer `persistentListOf()` / `toImmutableList()` for default values.
-
-### Navigation
-
-Uses **Navigation 3** (`androidx.navigation3`). Routes are `@Serializable` sealed interfaces:
-
-```kotlin
-// In MainNavKey.kt
-@Serializable
-data class MainRouteXxx(val id: Long) : MainRoute
-```
-
-Entry registered in `MainNavGraph.kt`:
-
-```kotlin
-entry<MainRouteXxx> { route ->
-    val viewModel = koinViewModel<XxxViewModel>()
-    XxxScreen(
-        state = viewModel.uiState.collectAsStateWithLifecycle().value,
-        onIntent = viewModel::onIntent,
-        onBack = { onNavigateBack() },
-        onNavigateToYyy = { onNavigateToRoute(it) },
-    )
-}
-```
-
-Key rules:
-
-- Screens **never** reference the navigator directly — receive `onBack`, `onNavigateToXxx` lambdas.
-- Navigation is callback-based, wired by the entry provider.
-- New routes added to the `MainRoute` sealed interface in `MainNavKey.kt`.
-
-### Koin DI
-
-- Register ViewModels in `di/appModule.kt` with `viewModelOf(::XxxViewModel)`.
-- Inject in Compose via `koinViewModel()` (default param or explicit in entry provider).
-- For keyed ViewModels (e.g. per-book): `koinViewModel<XxxViewModel>(key = route.bookUrl)`.
-- Repositories/gateways/use cases registered as `singleOf(::...)`.
-
-### Activity Base Class
-
-New standalone Compose activities extend `BaseComposeActivity`:
-
-```kotlin
-class XxxActivity : BaseComposeActivity() {
-    @Composable
-    override fun Content() {
-        // Screen content — AppTheme is already applied by the base class
-    }
-}
-```
-
-### RouteScreen Wrapper
-
-For screens needing activity result handling, lifecycle observation, or permission requests, use a
-two-layer pattern:
-
-- Outer `XxxRouteScreen`: handles `ActivityResultLauncher`, lifecycle callbacks, file pickers,
-  permission requests. Wires ViewModel.
-- Inner `XxxScreen`: pure UI, stateless with `state` + `onIntent`.
-
-### Material 3 vs Miuix
-
-The project supports two Compose theme engines. If a screen needs engine-specific UI, branch on:
-
-```kotlin
-if (ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)) {
-    // Miuix implementation
-} else {
-    // Material 3 implementation
-}
-```
-
-For detailed Compose review conventions and migration patterns, see
-`.Codex/skills/legado-compose-review/`.
-
-## Rhino JavaScript Engine
-
-Book sources, RSS sources, and HTTP TTS use JavaScript rules. `initRhino()` in `App.kt` registers `NativeBaseSource` wrappers for `BookSource`, `RssSource`, `HttpTTS` (writable JS objects) and `ReadOnlyJavaObject` wrappers for rule entities. Rule parsing logic lives in `help/source/` and `model/analyzeRule/`.
-
-## Important Constraints
-
-- **Do not update jsoup** beyond 1.16.2 — a breaking change in newer versions (see [jsoup#2017](https://github.com/jhy/jsoup/pull/2017)) affects `AnalyzeByJSoup.kt` and the JsoupXpath library
-- **Do not update hutool** beyond 5.8.22 — pinned in `libs.versions.toml:42`
-- Package name discrepancy: code namespace is `io.legado.app` but `applicationId` is `io.legato.kazusa`
-- Min SDK 26, target SDK 37, compile SDK 37
-- Release builds enable R8 minification + resource shrinking; `noR8` variant disables both for crash debugging
-- APK is split by ABI (`armeabi-v7a`, `arm64-v8a`, plus universal)
-- Firebase Analytics and Performance are included; `google-services` plugin applied
-
-## Web Frontend
-
-Located in `modules/web/` — a Vue 3 + TypeScript + Vite project for remote bookshelf and source editing. Must connect to the app's built-in HTTP server (started via `WebService` in the main activity settings). Commands:
-
-```bash
-cd modules/web
-pnpm install
-pnpm dev       # dev server
-pnpm build     # production build
-```
-
-Set `VITE_API` in `.env.development` to the app's web service IP.
-
-
-
-## 编码前思考
 - 明确假设，不确定时询问而非猜测。
 - 存在歧义时，列出多种解释，不默默选定单一方案。
 - 如果任务有明显更简单的做法，直接指出优化思路。
 - 发现代码矛盾、逻辑不一致时及时暂停，请求信息澄清。
 
-## 简洁优先
+### 简洁优先
+
 - 用最少的代码解决问题，拒绝冗余实现。
 - 不为一次性需求创建抽象层、复杂架构。
-- 不盲目增加扩展性、可配置性，应对“未来可能用到”的场景。
+- 不盲目增加扩展性、可配置性，应对"未来可能用到"的场景。
 - 若代码可大幅精简，主动重写优化。
 - 校验标准：以资深工程师视角判断，代码若过于复杂，立即简化。
 
-## 精准修改
+### 精准修改
+
 - 仅修改与当前任务直接相关的代码内容。
 - 不顺手优化相邻代码、注释、排版格式。
 - 不重构原本可以正常运行的代码模块。
@@ -419,79 +43,106 @@ Set `VITE_API` in `.env.development` to the app's web service IP.
 - 因本次修改产生的无效导入、废弃变量，可直接删除。
 - 发现项目中原有的死代码、冗余内容，仅做文字提醒，不擅自删除。
 
-## 目标驱动执行
+### Settings Gateway 约定
+
+- 普通设置 Gateway 通过 `update { current -> current.copy(...) }` 变更状态。
+- 不要引入 `*SettingsUpdate` 分发类型或 settings gateway 上的 `updateAll`。
+- 相关联的多字段变更在一个 `copy(...)` 变换中提交，让 SSOT 原子应用。
+- 保持专用 API 的既有形态：`ReadStyleMutation`、`ThemePackageSettingsGateway.applyAndAwait`、`ThemeStateTransaction`、`AppUiConfigurationGateway`。
+
+### 目标驱动执行
+
 - 执行任务前，定义清晰、可落地的成功标准。
-- 将“修复Bug”转化为：编写用例复现问题，再调试至用例正常通过。
-- 将“新增校验功能”转化为：针对异常输入编写测试用例，保证全部通过。
-- 将“代码重构”转化为：完成重构后，确保原有所有测试用例正常运行。
+- 将"修复Bug"转化为：编写用例复现问题，再调试至用例正常通过。
+- 将"新增校验功能"转化为：针对异常输入编写测试用例，保证全部通过。
+- 将"代码重构"转化为：完成重构后，确保原有所有测试用例正常运行。
 - 多步骤复杂任务，先输出简短执行计划，同时标注每一步的验证方式。
 
-## 提示
-- maven仓库路径在 E:\DevelopSoft\JetBrains\mavenRepository
-- 统一中文回复
-- 读写文件统一utf-8格式
-- gradle缓存和项目放到同一个盘中，文件夹名字gradle-home
+## 构建 / 测试 / 运行
+
+```bash
+# 快速编译检查（仅 Kotlin，不打 dex/包 — 验证代码可编译最快）
+.\gradlew.bat :app:compileAppDebugKotlin
+
+# 构建全部变体
+./gradlew assembleAppRelease
+
+# 不带 R8 构建（崩溃调试用 — 无混淆/收缩）
+./gradlew assembleAppNoR8
+
+# Debug 构建
+./gradlew assembleAppDebug
+
+# 运行单元测试（JVM，本地）
+./gradlew test
+
+# 运行单个测试类
+./gradlew test --tests "io.legado.app.model.cache.CacheDownloadQueueTest"
+
+# 运行连接设备的 Android 测试
+./gradlew connectedAndroidTest
+
+# Lint
+./gradlew lint
+
+# 更新 Cronet（修改 gradle.properties 中 CronetVersion 后）
+./gradlew app:downloadCronet
+```
+
+- 开发用 JDK 21（`build.gradle.kts` 中 `jvmToolchain` 设置）；CI 用 JDK 17 构建。
+- Gradle 属性：8 GB 堆、配置缓存关闭（`gradle.properties:31`）、非传递 R 类、精确资源收缩启用。
+
+## 重要约束
+
+- **jsoup 不要升级超过 1.16.2** — 新版本的破坏性变更（见 [jsoup#2017](https://github.com/jhy/jsoup/pull/2017)）影响 `AnalyzeByJSoup.kt` 和 JsoupXpath 库。
+- **hutool 不要升级超过 5.8.22** — 锁定在 `libs.versions.toml:42`。
+- 包名不一致：代码命名空间是 `io.legado.app`，但 `applicationId` 是 `io.legato.kazusa`。
+- Min SDK 26，target SDK 37，compile SDK 37。
+- Release 构建启用 R8 混淆 + 资源收缩；`noR8` 变体两者皆关，用于崩溃调试。
+- APK 按 ABI 拆分（`armeabi-v7a`、`arm64-v8a`，外加 universal）。
+- 包含 Firebase Analytics 与 Performance；应用了 `google-services` 插件。
+
+## Compose 界面开发规则（新界面强制遵循）
+
+**所有新界面必须用 Jetpack Compose 实现。** 禁止新建 View 系 Activity/Fragment/XML 布局；既有 View 界面可在迁移完成前保留。详细模板与示例代码见 `docs/agents/compose-guidelines.md`，核心规则如下：
+
+- **MVI/UDF**：每个界面按 `XxxContract.kt`（`@Stable` 的 `XxxUiState`、`sealed interface XxxIntent/XxxEffect`，可选 `XxxSheet/XxxDialog`）+ `XxxViewModel.kt` + `XxxScreen.kt` 组织。
+- **ViewModel**：直接继承 `ViewModel()`；`_uiState` 为 `MutableStateFlow` 经 `.asStateFlow()` 暴露；`_effects` 为 `MutableSharedFlow(extraBufferCapacity = 16)` 经 `.asSharedFlow()` 暴露；`tryEmit` 发副作用；单一 `onIntent()` 入口 `when` 分发。
+- **Screen 无状态**：接收 `state`/`onIntent`/`effects`，不直接访问 ViewModel；副作用在 `LaunchedEffect` 中用 `collectLatest` 收集；无业务逻辑、无直接 DB/网络调用；优先使用项目自定义组件（`AppScaffold`、`AppText`、`AppAlertDialog`、`AppModalBottomSheet`、`NormalCard`、`GlassMediumFlexibleTopAppBar` 等）。
+- **稳定性**：所有 UiState/UI item 数据类标注 `@Stable`；列表属性用 `ImmutableList`（`kotlinx.collections.immutable`），默认值 `persistentListOf()`/`toImmutableList()`。
+- **导航**：Navigation 3，路由为 `@Serializable` sealed interface（加入 `MainNavKey.kt` 的 `MainRoute`）；界面不直接引用 navigator，通过 `onBack`/`onNavigateToXxx` 回调，由 entry provider 接线（`MainNavGraph.kt`）。
+- **Koin DI**：ViewModel 在 `di/appModule.kt` 用 `viewModelOf(::XxxViewModel)` 注册；界面用 `koinViewModel()` 注入（按 key：`koinViewModel<XxxViewModel>(key = route.bookUrl)`）；仓库/Gateway/用例用 `singleOf(::...)`。
+- **Activity 基类**：独立 Compose Activity 继承 `BaseComposeActivity`，重写 `Content()`。
+- **RouteScreen 包装层**：需要 ActivityResult/生命周期/权限的界面分两层——外层 `XxxRouteScreen` 处理副作用并接线 VM，内层 `XxxScreen` 纯 UI。
+- **M3 vs Miuix**：需要引擎专属 UI 时用 `ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)` 分支。
+- 评审约定与迁移模式：`.Codex/skills/legado-compose-review/`、`.agents/skills/legado-compose-migration/SKILL.md`。
 
 ## 番茄小说集成（feature/fanqie-sync 分支）
 
-番茄小说（fanqienovel.com）云书架同步 + 阅读进度双向同步功能。全部代码在 `app/src/main/java/io/legado/app/fanqie/`，是独立于 Clean Architecture 三层之外的 `help` 平级基础设施包，直接操作 `appDb`/`ReadBook`/`CookieStore`。
-
-### 模块结构
-
-| 文件 | 职责 |
-|---|---|
-| `fanqie/FanqieConstants.kt` | URL/UA/AID/版本常量；`parseBookId(bookUrl)` 用 `^https://fanqienovel\.com/page/(\d+)` 提取书号；`isFanqieBook()` |
-| `fanqie/FanqieConfig.kt` | SharedPreferences `FanqieConfig`：`groupId`、`autoSyncProgress`（默认 true）、`lastSyncTime` |
-| `fanqie/FanqieApi.kt` | HTTP 客户端（OkHttp + CookieStore）：书架信息、multidetail 详情、目录、进度拉取/上报、云书架删除；`loginState: StateFlow<FanqieLoginState>`；`hasCookie()`/`csrfToken()`；`FanqieBook`/`FanqieChapter`/`FanqieSyncResult` 数据类 |
-| `fanqie/FanqieGroup.kt` | 私有分组（`isPrivate=true`，组名"番茄小说"）的幂等创建 `ensureGroup()`、备份恢复后重建 `afterRestore()`、`isFanqieGroup(groupId)` 判断 |
-| `fanqie/FanqieShelfRepository.kt` | 云书架 ↔ 本地书架（Room `bookDao`）双向同步 `syncFromCloud()`；单本入架/移架 `addToLocalShelf`/`removeFromLocalShelf`/`removeFromCloudShelf` |
-| `fanqie/FanqieProgressSyncer.kt` | 阅读进度自动上报：监听 `ReadBook.snapshot`，30s 防抖 → `FanqieApi.updateProgress`；`flush()` 立即上报（阅读会话结束/退后台兜底）；目录 1h 缓存；同章节 2000 字符桶去重；落后云进度跳过 |
-| `fanqie/FanqieFeature.kt` | 入口 `init()`：注册 `onActivityStopped`→`flush()` 兜底；启动协程：ensureGroup → start syncer → refreshLoginState → 12h 定时全量同步 |
-| `fanqie/ui/FanqieContract.kt` | MVI Contract：`FanqieUiState`/`FanqieIntent`/`FanqieEffect` |
-| `fanqie/ui/FanqieViewModel.kt` | VM：加载/同步/登录/入架移架/开关自动上报 |
-| `fanqie/ui/FanqieScreen.kt` | Compose 屏幕：云书架列表、进度、登录/同步入口 |
-
-### 数据流
-
-- **拉取（云→本地）**：`FanqieViewModel.load()/syncNow()` → `FanqieApi.fetchShelfBooks()`（书架 + 进度 + multidetail + 目录并行 `async/awaitAll` + 缺作者时爬页面补全）→ `FanqieShelfRepository.syncFromCloud()` 写 Room。
-- **上报（本地→云）**：`FanqieProgressSyncer.start()` 收集 `ReadBook.snapshot`，条件满足（非本地书、是番茄书、有 cookie、autoSync 开）→ 防抖 30s → `report()` → `updateProgress`。`flush()` 跳过防抖立即上报。
-- **bookId 解析**：优先 `parseBookId(bookUrl)`；换源后的书靠 `variableMap["fanqieBookId"]`（`FanqieConstants.BOOK_ID_VARIABLE`）兜底。
-
-### 登录机制
-
-登录态 = CookieStore 中是否有番茄域名 cookie。UI 流程：`FanqieScreen` 点登录 → `OpenLogin` effect → 打开 `WebViewActivity`（传入 sourceOrigin/sourceName）→ 用户网页登录 → ActivityResult 回传 → `LoginCompleted` → 从 WebView `CookieManager` 取 cookie 写入 `CookieStore` → `refreshLoginState()` → 重新 load。
+番茄小说云书架 + 阅读进度双向同步。代码在 `app/src/main/java/io/legado/app/fanqie/`（`help` 平级基础设施包，直接操作 `appDb`/`ReadBook`/`CookieStore`）。**完整说明见 `docs/agents/fanqie-sync.md`**，要点：
 
 ### 集成点（勿随意改动）
 
 - `App.kt`：`FanqieFeature.init()`（番茄注释标记处）。
 - `di/appModule.kt`：`viewModelOf(::FanqieViewModel)`。
-- `ui/main/MainNavKey.kt`/`MainNavGraph.kt`/`MainNavigator.kt`：`MainRouteFanqie` 路由注册；`MainScreen` 与 `BookshelfScreen` 传 `onNavigateToFanqie`。
-- `ui/main/bookshelf/`：`BookshelfScreen` 顶部刷新按钮旁新增"番茄同步"按钮、番茄分组空态登录引导、`FanqieLoginBanner` 横幅；`BookshelfViewModel` combine `FanqieApi.loginState` → `fanqieLoginState`；`BookshelfUiState` 加该字段。
-- 私有组保护：`BookGroupRepository.flowSelect` 过滤掉番茄组；`BookshelfViewModel` 分组列表、`GroupManageSheet`、`GroupEditDialog`、`GroupEditSheet` 均用 `FanqieGroup.isFanqieGroup()` 排除/禁编辑。
-- `domain/usecase/ChangeBookSourceUseCase.kt`：换源时若新书是番茄书则写 `fanqieBookId` 变量。
-- `help/storage/Restore.kt`：备份恢复后调 `FanqieGroup.afterRestore()` 重建番茄组。
-- `ui/book/read/ReadBookViewModel.kt` `onCleared()`：调 `FanqieProgressSyncer.flush()`（阅读会话真正结束）。
+- `ui/main/MainNavKey.kt`/`MainNavGraph.kt`/`MainNavigator.kt`：`MainRouteFanqie` 路由；`MainScreen`/`BookshelfScreen` 传 `onNavigateToFanqie`。
+- `ui/main/bookshelf/`：番茄同步按钮、番茄分组空态登录引导、`FanqieLoginBanner`；`BookshelfViewModel`/`BookshelfUiState` 加 `fanqieLoginState`。
+- 私有组保护：`BookGroupRepository.flowSelect` 过滤番茄组；`BookshelfViewModel`、`GroupManageSheet`、`GroupEditDialog`、`GroupEditSheet` 用 `FanqieGroup.isFanqieGroup()` 排除/禁编辑。
+- `domain/usecase/ChangeBookSourceUseCase.kt`：换源到番茄书时写 `fanqieBookId` 变量。
+- `help/storage/Restore.kt`：备份恢复后调 `FanqieGroup.afterRestore()`。
+- `ui/book/read/ReadBookViewModel.kt` `onCleared()`：调 `FanqieProgressSyncer.flush()`。
 
 ### 语义约定（容易踩坑）
 
-- `durChapterIndex`/`readChapterIndex` 为 **0-based** 目录索引；显示章号须 `+1`。读 `FanqieApi.parseProgress` 的 `index`、`FanqieBook.readChapterIndex`、书架 `durChapterIndex` 均如此。
-- `readTimestamp`（云端）单位**秒**；本地 `durChapterTime` 单位**毫秒**，换算 `*1000L`。
+- `durChapterIndex`/`readChapterIndex` 为 **0-based** 目录索引，显示章号须 `+1`。
+- 云端 `readTimestamp` 单位**秒**；本地 `durChapterTime` 单位**毫秒**，换算 `*1000L`。
 - 进度 `fraction` 按 `(chapterIndex + 0.5) / chapterCount` 计算，非真实章节内百分比。
-- 番茄书本地 `bookUrl` = `https://fanqienovel.com/page/{bookId}`，`origin`= `https://fanqienovel.com`，并写入 `variableMap["fanqieBookId"]`。
+- 番茄书本地 `bookUrl` = `https://fanqienovel.com/page/{bookId}`，`origin` = `https://fanqienovel.com`，并写入 `variableMap["fanqieBookId"]`。
 
-### 已完成并实机验证的修复
+## 环境提示
 
-1. **阅读进度不同步**：阅读器是 MainActivity 内 Compose 路由（`MainRouteReadBook`），BACK 退出时 MainActivity 不 stop，原挂 `onActivityStopped` 的 flush 不触发。改为 `ReadBookViewModel.onCleared()` 调 `flush()`——阅读会话真正结束时触发；`FanqieFeature.onActivityStopped` 保留作退后台兜底。
-2. **番茄书架页进度 off-by-one**：`FanqieScreen.kt` 显示章号改为 `readChapterIndex + 1`。
-3. **App 启动慢**：`FanqieFeature.kt` 移除启动时全量云同步，仅 `refreshLoginState()` + 12h 循环；实测冷启动 68928ms → 3820ms/1208ms。
-
-调试日志保留：`FanqieProgressSyncer`（TAG=`FanqieProgress`，逐条件打日志）+ `FanqieApi.updateProgress`（bookId/itemId/index/fraction）。
-
-### 关键环境与实机备忘
-
-- 调试包 `io.legato.kazusa.debug`；设备序列号 `872d5417`；adb 在 `E:\DevelopSoft\AndroidSdk\platform-tools\adb.exe`。
-- 构建需设 `JAVA_HOME=E:\DevelopSoft\Java\jdk-21`、`GRADLE_USER_HOME=E:\gradle-home`，前台运行 gradlew 并把输出 `Out-File` 到临时文件。
-- `fanqie_app.json` 是番茄书源定义，用户决定**不提交**到仓库，勿 add。
-- 上滑翻页 `input swipe 900 1300 200 1300 300`；点击正文 `tap 540 1300` 不翻页。番茄分组 tab `tap 353 464`，十日终焉封面 `tap 195 800`。
-- uiautomator dump 在 MIUI 先打印 theme_compatibility.xml ENOENT 但 dump 仍成功；空 dump（len=2810）表示页面转场中需等待。
-- 休眠陷阱：设备自动锁屏（`mDreamingLockscreen=true`）后 `wm dismiss-keyguard` 无效，需用户手动解锁。
+- maven 仓库路径在 `E:\DevelopSoft\JetBrains\mavenRepository`
+- 统一中文回复
+- 读写文件统一 utf-8 格式
+- gradle 缓存和项目放到同一个盘中，文件夹名字 `gradle-home`
+- 实机调试备忘（设备序列号、adb 路径、UI 点击坐标等）见 `docs/agents/fanqie-sync.md`
