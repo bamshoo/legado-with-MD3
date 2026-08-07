@@ -30,6 +30,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.legado.app.R
 import io.legado.app.data.entities.BookGroup
+import io.legado.app.fanqie.FanqieGroup
 import io.legado.app.ui.book.group.GroupDeleteAction
 import io.legado.app.ui.book.group.GroupEditContent
 import io.legado.app.ui.book.group.GroupResetCoverAction
@@ -102,7 +103,7 @@ fun GroupManageSheet(
         onDismissRequest = onDismissRequest,
         title = if (!isEditing) stringResource(R.string.group_manage) else stringResource(R.string.group_edit),
         startAction = editingGroup?.takeIf {
-            isEditing && (it.groupId > 0 || it.groupId == Long.MIN_VALUE)
+            isEditing && (it.groupId > 0 || it.groupId == Long.MIN_VALUE) && !FanqieGroup.isFanqieGroup(it.groupId)
         }?.let { group ->
             {
                 GroupDeleteAction(

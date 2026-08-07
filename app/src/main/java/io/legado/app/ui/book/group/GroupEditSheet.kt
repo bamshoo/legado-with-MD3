@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import io.legado.app.R
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.TagGroupRule
+import io.legado.app.fanqie.FanqieGroup
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.AppTextField
 import io.legado.app.ui.widget.components.alert.AppAlertDialog
@@ -64,7 +65,8 @@ fun GroupEditSheet(
     AppModalBottomSheet(
         show = show,
         onDismissRequest = onDismissRequest,
-        startAction = if (group != null && (group.groupId > 0 || group.groupId == Long.MIN_VALUE)) {
+        startAction = if (group != null && (group.groupId > 0 || group.groupId == Long.MIN_VALUE)
+            && !FanqieGroup.isFanqieGroup(group.groupId)) {
             {
                 GroupDeleteAction(
                     group = group,
@@ -104,6 +106,7 @@ fun GroupEditContent(
 ) {
     val context = LocalContext.current
     var groupName by remember(group) { mutableStateOf(group?.groupName ?: "") }
+    val isFanqieGroup = group != null && FanqieGroup.isFanqieGroup(group.groupId)
     var enableRefresh by remember(group) { mutableStateOf(group?.enableRefresh ?: true) }
     var isPrivate by remember(group) { mutableStateOf(group?.isPrivate ?: false) }
     var showDisablePrivateDialog by remember(group) { mutableStateOf(false) }
@@ -168,6 +171,7 @@ fun GroupEditContent(
                 AppTextField(
                     value = groupName,
                     onValueChange = { groupName = it },
+                    enabled = !isFanqieGroup,
                     backgroundColor = LegadoTheme.colorScheme.onSheetContent,
                     label = stringResource(R.string.group_name),
                     modifier = Modifier.fillMaxWidth(),

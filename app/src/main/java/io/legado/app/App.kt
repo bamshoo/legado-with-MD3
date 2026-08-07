@@ -40,6 +40,7 @@ import io.legado.app.domain.gateway.AppShellSettingsGateway
 import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.domain.gateway.ReadStyleGateway
 import io.legado.app.help.AppFreezeMonitor
+import io.legado.app.fanqie.FanqieFeature
 import io.legado.app.help.AppWebDav
 import io.legado.app.help.CrashHandler
 import io.legado.app.help.DefaultData
@@ -233,6 +234,8 @@ class App : Application(), ImageLoaderFactory {
                 AppWebDav.upConfig()
                 AppWebDav.downloadAllBookProgress()
             }
+            //番茄小说同步
+            FanqieFeature.init()
         }
     }
 

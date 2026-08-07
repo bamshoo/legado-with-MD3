@@ -36,6 +36,9 @@ data class MainRouteBookSourceDebug(val sourceUrl: String? = null) : MainRoute
 data class MainRouteRssSourceDebug(val sourceUrl: String? = null) : MainRoute
 
 @Serializable
+data object MainRouteFanqie : MainRoute
+
+@Serializable
 data object MainRouteSettings : MainRoute
 
 @Serializable

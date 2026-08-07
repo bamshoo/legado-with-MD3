@@ -11,6 +11,7 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookSource
 import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.gateway.ReadSettingsGateway
+import io.legado.app.fanqie.FanqieConstants
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.isLocal
@@ -297,6 +298,9 @@ class ChangeBookSourceUseCase(
         }
         if (newBook.wordCount.isNullOrBlank()) {
             newBook.wordCount = wordCount
+        }
+        FanqieConstants.parseBookId(bookUrl)?.let { fanqieBookId ->
+            newBook.putVariable(FanqieConstants.BOOK_ID_VARIABLE, fanqieBookId)
         }
     }
 }

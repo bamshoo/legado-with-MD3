@@ -32,6 +32,8 @@ import io.legado.app.R
 import io.legado.app.domain.model.BookSearchScope
 import io.legado.app.domain.model.settings.AppUiConfiguration
 import io.legado.app.model.Download
+import io.legado.app.fanqie.ui.FanqieScreen
+import io.legado.app.fanqie.ui.FanqieViewModel
 import io.legado.app.ui.about.AboutEffect
 import io.legado.app.ui.about.AboutScreen
 import io.legado.app.ui.about.AboutViewModel
@@ -272,6 +274,9 @@ fun MainActivity.mainEntryProvider(
             onNavigateToCache = { groupId ->
                 onNavigateToRoute(MainRouteCache(groupId))
             },
+            onNavigateToFanqie = {
+                onNavigateToRoute(MainRouteFanqie)
+            },
             onNavigateToBookCacheManage = {
                 onNavigateToRoute(MainRouteBookCacheManage)
             },
@@ -361,6 +366,16 @@ fun MainActivity.mainEntryProvider(
             },
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = LocalNavAnimatedContentScope.current,
+        )
+    }
+
+    entry<MainRouteFanqie> {
+        val viewModel = koinViewModel<FanqieViewModel>()
+        FanqieScreen(
+            state = viewModel.uiState.collectAsStateWithLifecycle().value,
+            onIntent = viewModel::onIntent,
+            effects = viewModel.effects,
+            onBack = { onNavigateBack() },
         )
     }
 

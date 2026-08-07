@@ -60,6 +60,7 @@ import io.legado.app.help.config.ReadBookConfig
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.help.source.getSourceType
 import io.legado.app.model.ImageProvider
+import io.legado.app.fanqie.FanqieProgressSyncer
 import io.legado.app.model.ReadAloud
 import io.legado.app.model.ReadAloudSessionStore
 import io.legado.app.model.ReadBook
@@ -2474,6 +2475,7 @@ class ReadBookViewModel(
             ReadAloud.stop(context)
         }
         readerSession.detach()
+        FanqieProgressSyncer.flush()
     }
 
     fun addToBookshelf(book: Book, toc: List<BookChapter>, success: (() -> Unit)? = null) {

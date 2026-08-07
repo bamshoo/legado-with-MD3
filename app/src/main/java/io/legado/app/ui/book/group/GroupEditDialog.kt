@@ -7,6 +7,7 @@ import androidx.fragment.app.viewModels
 import io.legado.app.R
 import io.legado.app.base.BaseBottomSheetDialogFragment
 import io.legado.app.data.entities.BookGroup
+import io.legado.app.fanqie.FanqieGroup
 import io.legado.app.databinding.DialogBookGroupEditBinding
 import io.legado.app.lib.dialogs.alert
 import io.legado.app.utils.FileUtils
@@ -77,6 +78,8 @@ class GroupEditDialog() : BaseBottomSheetDialogFragment(R.layout.dialog_book_gro
 
         bookGroup?.let { group ->
             binding.btnDelete.isEnabled = (group.groupId > 0 || group.groupId == Long.MIN_VALUE)
+                && !FanqieGroup.isFanqieGroup(group.groupId)
+            binding.tieGroupName.isEnabled = !FanqieGroup.isFanqieGroup(group.groupId)
             binding.tieGroupName.setText(group.groupName)
             if (group.cover != null) {
                 binding.ivCover.load(group.cover)

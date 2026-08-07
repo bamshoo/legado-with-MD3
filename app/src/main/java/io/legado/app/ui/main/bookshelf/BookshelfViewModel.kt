@@ -26,6 +26,8 @@ import io.legado.app.domain.gateway.BookshelfSettingsGateway
 import io.legado.app.domain.gateway.AppShellSettingsGateway
 import io.legado.app.domain.gateway.ThemeSettingsGateway
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.fanqie.FanqieApi
+import io.legado.app.fanqie.FanqieGroup
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.model.CacheBook
@@ -215,6 +217,7 @@ class BookshelfViewModel(
         userCounts: Map<Long, Int>
     ): Set<Long> = groups.mapNotNullTo(hashSetOf()) { group ->
         if (group.groupId == BookGroup.IdAll) return@mapNotNullTo null
+        if (FanqieGroup.isFanqieGroup(group.groupId)) return@mapNotNullTo null
         val count = if (group.groupId > 0) {
             userCounts[group.groupId] ?: 0
         } else {
@@ -592,20 +595,25 @@ class BookshelfViewModel(
     }
 
     val uiState: StateFlow<BookshelfUiState> = combine(
-        contentUiState,
-        bookshelfSettings,
-        appShellSettingsGateway.settings,
-        themeSettingsGateway.settings,
-        pendingUploadUrlFlow,
-    ) { state, settings, appShellSettings, themeSettings, pendingUploadUrl ->
-        state.copy(
-            settings = settings,
-            useRaisedBottomInset = appShellSettings.useFloatingBottomBar || themeSettings.enableBlur,
-            enableCustomTagColors = themeSettings.enableCustomTagColors,
-            customTagColors = parseTagColors(themeSettings.customTagColorsJson),
-            themeColor = themeSettings.themeColor,
-            pendingUploadUrl = pendingUploadUrl,
-        )
+        combine(
+            contentUiState,
+            bookshelfSettings,
+            appShellSettingsGateway.settings,
+            themeSettingsGateway.settings,
+            pendingUploadUrlFlow,
+        ) { state, settings, appShellSettings, themeSettings, pendingUploadUrl ->
+            state.copy(
+                settings = settings,
+                useRaisedBottomInset = appShellSettings.useFloatingBottomBar || themeSettings.enableBlur,
+                enableCustomTagColors = themeSettings.enableCustomTagColors,
+                customTagColors = parseTagColors(themeSettings.customTagColorsJson),
+                themeColor = themeSettings.themeColor,
+                pendingUploadUrl = pendingUploadUrl,
+            )
+        },
+        FanqieApi.loginState,
+    ) { base, fanqieLoginState ->
+        base.copy(fanqieLoginState = fanqieLoginState)
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),

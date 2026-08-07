@@ -395,3 +395,61 @@ pnpm build     # production build
 ```
 
 Set `VITE_API` in `.env.development` to the app's web service IP.
+
+
+
+## 编码前思考
+- 明确假设，不确定时询问而非猜测。
+- 存在歧义时，列出多种解释，不默默选定单一方案。
+- 如果任务有明显更简单的做法，直接指出优化思路。
+- 发现代码矛盾、逻辑不一致时及时暂停，请求信息澄清。
+
+## 简洁优先
+- 用最少的代码解决问题，拒绝冗余实现。
+- 不为一次性需求创建抽象层、复杂架构。
+- 不盲目增加扩展性、可配置性，应对“未来可能用到”的场景。
+- 若代码可大幅精简，主动重写优化。
+- 校验标准：以资深工程师视角判断，代码若过于复杂，立即简化。
+
+## 精准修改
+- 仅修改与当前任务直接相关的代码内容。
+- 不顺手优化相邻代码、注释、排版格式。
+- 不重构原本可以正常运行的代码模块。
+- 严格匹配项目现有代码风格，保留原有编码习惯。
+- 因本次修改产生的无效导入、废弃变量，可直接删除。
+- 发现项目中原有的死代码、冗余内容，仅做文字提醒，不擅自删除。
+
+## 目标驱动执行
+- 执行任务前，定义清晰、可落地的成功标准。
+- 将“修复Bug”转化为：编写用例复现问题，再调试至用例正常通过。
+- 将“新增校验功能”转化为：针对异常输入编写测试用例，保证全部通过。
+- 将“代码重构”转化为：完成重构后，确保原有所有测试用例正常运行。
+- 多步骤复杂任务，先输出简短执行计划，同时标注每一步的验证方式。
+
+## 提示
+- maven仓库路径在 E:\DevelopSoft\JetBrains\mavenRepository
+- 统一中文回复
+- 读写文件统一utf-8格式
+- gradle缓存和项目放到同一个盘中，文件夹名字gradle-home
+
+## 番茄小说集成任务（feature/fanqie-sync 分支）
+
+已完成并实机验证的三个修复，当前分支提交即此任务的交付物：
+
+1. **阅读进度不同步**：阅读器是 MainActivity 内 Compose 导航路由（`MainRouteReadBook`），BACK 退出时 MainActivity 不 stop，原挂 `onActivityStopped` 的 flush 实际不触发。已在 `ReadBookViewModel.onCleared()`（`ui/book/read/ReadBookViewModel.kt`）调用 `FanqieProgressSyncer.flush()`——阅读会话真正结束时触发；`FanqieFeature.kt` 中 `onActivityStopped` 仍作退后台兜底。
+2. **番茄书架页进度 off-by-one**：`FanqieScreen.kt` 显示章号改为 `readChapterIndex + 1`（索引 0-based，章号 1-based）。
+3. **App 启动慢**：`FanqieFeature.kt` 移除启动时全量云同步，仅 `refreshLoginState()` + 12h 循环；实测冷启动 68928ms → 3820ms/1208ms。
+
+调试日志保留：`FanqieProgressSyncer`（TAG=`FanqieProgress`，逐条件打日志）+ `FanqieApi.updateProgress`（bookId/itemId/index/fraction），实机日志见 work log。
+
+番茄索引语义：`durChapterIndex`/`readChapterIndex` 为 0-based 目录索引；显示章号 `readChapterIndex + 1`；readTs 秒、durChapterTime 毫秒。
+
+关键环境（沿用 build 说明）：调试包 `io.legato.kazusa.debug`；设备序列号 `872d5417`；adb 在 `E:\DevelopSoft\AndroidSdk\platform-tools\adb.exe`；构建需设 `JAVA_HOME=E:\DevelopSoft\Java\jdk-21`、`GRADLE_USER_HOME=E:\gradle-home`，前台运行 gradlew 并把输出 `Out-File` 到临时文件。
+
+`fanqie_app.json` 是番茄书源定义，用户决定**不提交**到仓库，勿 add。
+
+实机操作备忘（继续开发时用）：
+- 上滑翻页 `input swipe 900 1300 200 1300 300`；点击正文 `tap 540 1300` 不翻页。
+- 番茄分组 tab `tap 353 464`，十日终焉封面 `tap 195 800`。
+- uiautomator dump 在 MIUI 先打印 theme_compatibility.xml ENOENT 但 dump 仍成功；空 dump（len=2810）表示页面转场中需等待。
+- 休眠陷阱：设备自动锁屏（`mDreamingLockscreen=true`）后 `wm dismiss-keyguard` 无效，需用户手动解锁。

@@ -35,6 +35,7 @@ import io.legado.app.data.entities.readRecord.ReadRecordDetail
 import io.legado.app.data.entities.readRecord.ReadRecordSession
 import io.legado.app.domain.gateway.AppLocaleGateway
 import io.legado.app.domain.gateway.ReadStyleGateway
+import io.legado.app.fanqie.FanqieGroup
 import io.legado.app.ui.book.read.ConfigUpdateAction
 import io.legado.app.ui.book.read.ReadConfigUpdateBus
 import io.legado.app.help.DirectLinkUpload
@@ -155,6 +156,8 @@ object Restore : KoinComponent {
             fileToListT<BookGroup>(path, "bookGroup.json")?.let {
                 appDb.bookGroupDao.replaceAll(it)
             }
+            // 备份覆盖分组表后，确保番茄组不丢失
+            FanqieGroup.afterRestore()
         }
         if (BackupConfig.dbIsNotIgnored("bookSource")) {
             fileToListT<BookSource>(path, "bookSource.json")?.let {

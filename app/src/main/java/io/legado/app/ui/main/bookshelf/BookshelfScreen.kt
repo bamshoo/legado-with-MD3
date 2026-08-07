@@ -97,10 +97,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
 import io.legado.app.data.entities.BookGroup
+import io.legado.app.fanqie.FanqieGroup
+import io.legado.app.fanqie.FanqieLoginState
 import io.legado.app.ui.book.group.GroupEditSheet
 import io.legado.app.ui.book.info.GroupSelectSheet
 import io.legado.app.ui.main.bookCoverSharedElementKey
@@ -163,6 +166,7 @@ fun BookshelfRouteScreen(
     onNavigateToRemoteImport: () -> Unit,
     onNavigateToLocalImport: () -> Unit,
     onNavigateToCache: (Long) -> Unit,
+    onNavigateToFanqie: () -> Unit = {},
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
@@ -181,6 +185,7 @@ fun BookshelfRouteScreen(
         onNavigateToRemoteImport = onNavigateToRemoteImport,
         onNavigateToLocalImport = onNavigateToLocalImport,
         onNavigateToCache = onNavigateToCache,
+        onNavigateToFanqie = onNavigateToFanqie,
         sharedTransitionScope = sharedTransitionScope,
         animatedVisibilityScope = animatedVisibilityScope,
     )
@@ -205,6 +210,7 @@ fun BookshelfScreen(
     onNavigateToRemoteImport: () -> Unit,
     onNavigateToLocalImport: () -> Unit,
     onNavigateToCache: (Long) -> Unit,
+    onNavigateToFanqie: () -> Unit = {},
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
@@ -516,6 +522,14 @@ fun BookshelfScreen(
                             },
                             imageVector = Icons.Default.Bookmarks,
                             contentDescription = stringResource(R.string.move_to_group)
+                        )
+                    }
+
+                    if (!isEditMode) {
+                        TopBarActionButton(
+                            onClick = onNavigateToFanqie,
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "番茄同步",
                         )
                     }
 
@@ -919,6 +933,7 @@ fun BookshelfScreen(
                             sharedCoverGroupId = currentGroupId,
                             sharedTransitionScope = sharedTransitionScope,
                             animatedVisibilityScope = animatedVisibilityScope,
+                            onNavigateToFanqie = onNavigateToFanqie,
                         )
                     } else {
                         HorizontalPager(
@@ -979,6 +994,7 @@ fun BookshelfScreen(
                                     sharedCoverGroupId = group.groupId,
                                     sharedTransitionScope = sharedTransitionScope,
                                     animatedVisibilityScope = animatedVisibilityScope,
+                                    onNavigateToFanqie = onNavigateToFanqie,
                                 )
                             }
                         }
@@ -1339,6 +1355,7 @@ fun BookshelfPage(
     sharedCoverGroupId: Long,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    onNavigateToFanqie: () -> Unit = {},
 ) {
     if (books.isEmpty()) {
         if (!isCurrentPage) return
@@ -1355,15 +1372,39 @@ fun BookshelfPage(
                 onButtonClick = onGlobalSearch
             )
         } else if (!uiState.isInitialLoading) {
-            EmptyMessage(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(
-                        top = paddingValues.calculateTopPadding(),
-                        bottom = 120.dp
-                    ),
-                messageResId = R.string.bookshelf_empty
-            )
+            if (FanqieGroup.isFanqieGroup(uiState.selectedGroupId)) {
+                val (message, buttonText) = when (uiState.fanqieLoginState) {
+                    FanqieLoginState.LoggedOut ->
+                        "尚未登录番茄小说\n登录后可同步云书架并自动上报阅读进度" to "前往登录"
+
+                    FanqieLoginState.Expired ->
+                        "番茄登录已失效\n请重新登录以继续同步书架和阅读进度" to "重新登录"
+
+                    FanqieLoginState.LoggedIn ->
+                        "番茄云书架为空\n点击「同步」可从云端拉取书籍" to "同步书架"
+                }
+                EmptyMessage(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            top = paddingValues.calculateTopPadding(),
+                            bottom = 120.dp
+                        ),
+                    message = message,
+                    buttonText = buttonText,
+                    onButtonClick = onNavigateToFanqie
+                )
+            } else {
+                EmptyMessage(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            top = paddingValues.calculateTopPadding(),
+                            bottom = 120.dp
+                        ),
+                    messageResId = R.string.bookshelf_empty
+                )
+            }
         }
         return
     }
@@ -1422,26 +1463,37 @@ fun BookshelfPage(
                 }
             )
     ) {
-        FastScrollLazyVerticalGrid(
-            columns = GridCells.Fixed(columns.coerceAtLeast(1)),
-            state = gridState,
-            modifier = Modifier
-                .fillMaxSize()
-                .semantics { contentDescription = listContentDescription }
-                .then(
-                    with(sharedTransitionScope) {
-                        if (this != null) Modifier.skipToLookaheadSize() else Modifier
-                    }
-                ),
-            contentPadding = adaptiveContentPaddingBookshelf(
+        Column(modifier = Modifier.fillMaxSize()) {
+            val showFanqieLoginBanner = isCurrentPage &&
+                FanqieGroup.isFanqieGroup(uiState.selectedGroupId) &&
+                uiState.fanqieLoginState != FanqieLoginState.LoggedIn
+            if (showFanqieLoginBanner) {
+                FanqieLoginBanner(
+                    expired = uiState.fanqieLoginState == FanqieLoginState.Expired,
+                    onNavigateToFanqie = onNavigateToFanqie,
+                )
+            }
+            FastScrollLazyVerticalGrid(
+                columns = GridCells.Fixed(columns.coerceAtLeast(1)),
+                state = gridState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .semantics { contentDescription = listContentDescription }
+                    .then(
+                        with(sharedTransitionScope) {
+                            if (this != null) Modifier.skipToLookaheadSize() else Modifier
+                        }
+                    ),
+                contentPadding = adaptiveContentPaddingBookshelf(
                 top = paddingValues.calculateTopPadding(),
                 bottom = if (uiState.useRaisedBottomInset) 120.dp else 8.dp,
                 horizontal = 8.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(if (isGridMode) 8.dp else 0.dp),
-            horizontalArrangement = Arrangement.spacedBy(if (isGridMode) 8.dp else 0.dp),
-            showFastScroll = showFastScroll
-        ) {
+                verticalArrangement = Arrangement.spacedBy(if (isGridMode) 8.dp else 0.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (isGridMode) 8.dp else 0.dp),
+                showFastScroll = showFastScroll
+            ) {
             itemsIndexed(displayBooks, key = { _, item -> item.book.bookUrl }) { index, bookUi ->
                 val isSelected = selectedBookUrls.contains(bookUi.book.bookUrl)
                 val sharedCoverKey = bookCoverSharedElementKey(
@@ -1528,6 +1580,42 @@ fun BookshelfPage(
                     )
                 }
             }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FanqieLoginBanner(
+    expired: Boolean,
+    onNavigateToFanqie: () -> Unit,
+) {
+    NormalCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppText(
+                text = if (expired) {
+                    "番茄登录已失效，请重新登录以继续同步书架和阅读进度"
+                } else {
+                    "登录后即可同步番茄云书架并自动上报阅读进度"
+                },
+                modifier = Modifier.weight(1f),
+                fontSize = 13.sp,
+                maxLines = 2,
+            )
+            Spacer(Modifier.width(8.dp))
+            SmallPlainButton(
+                text = if (expired) "重新登录" else "前往登录",
+                onClick = onNavigateToFanqie,
+            )
         }
     }
 }

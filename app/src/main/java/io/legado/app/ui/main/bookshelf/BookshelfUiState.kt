@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import android.net.Uri
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.domain.model.settings.BookshelfSettings
+import io.legado.app.fanqie.FanqieLoginState
 import io.legado.app.ui.config.themeConfig.TagColorPair
 import io.legado.app.ui.widget.components.list.ListUiState
 import kotlinx.collections.immutable.ImmutableList
@@ -115,4 +116,5 @@ data class BookshelfUiState(
     val customTagColors: ImmutableList<TagColorPair> = persistentListOf(),
     val themeColor: Int = 0,
     val pendingUploadUrl: String? = null,
+    val fanqieLoginState: FanqieLoginState = FanqieLoginState.LoggedOut,
 ) : ListUiState<BookUiItem>

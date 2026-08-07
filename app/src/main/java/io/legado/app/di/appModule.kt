@@ -201,6 +201,7 @@ import io.legado.app.help.http.okHttpClientManga
 import io.legado.app.model.LegacyReaderSession
 import io.legado.app.model.ReadAloudSessionStore
 import io.legado.app.model.ReaderSession
+import io.legado.app.fanqie.ui.FanqieViewModel
 import io.legado.app.ui.about.AboutViewModel
 import io.legado.app.ui.ai.chat.AiChatViewModel
 import io.legado.app.ui.association.ImportBookSourceViewModel
@@ -517,6 +518,7 @@ val appModule = module {
     viewModelOf(::HomeViewModel)
     viewModelOf(::HomepageViewModel)
     viewModelOf(::AboutViewModel)
+    viewModelOf(::FanqieViewModel)
     viewModelOf(::GroupViewModel)
     viewModelOf(::ReplaceRuleViewModel)
     viewModelOf(::AllBookmarkViewModel)

@@ -2,7 +2,9 @@ package io.legado.app.data.repository
 
 import io.legado.app.data.dao.BookGroupDao
 import io.legado.app.data.entities.BookGroup
+import io.legado.app.fanqie.FanqieConfig
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 class BookGroupRepository(private val bookGroupDao: BookGroupDao) {
 
@@ -11,7 +13,10 @@ class BookGroupRepository(private val bookGroupDao: BookGroupDao) {
     }
 
     fun flowSelect(): Flow<List<BookGroup>> {
-        return bookGroupDao.flowSelect()
+        val fanqieGroupId = FanqieConfig.groupId
+        return bookGroupDao.flowSelect().map { groups ->
+            if (fanqieGroupId > 0) groups.filterNot { it.groupId == fanqieGroupId } else groups
+        }
     }
 
     fun flowShow(): Flow<List<BookGroup>> {

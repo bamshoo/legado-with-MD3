@@ -215,7 +215,8 @@ object MainNavigator {
             }
 
             MainRouteRssFavorites,
-            MainRouteRuleSub -> {
+            MainRouteRuleSub,
+            MainRouteFanqie -> {
                 if (currentRoute == MainRouteHome) {
                     backStack.add(route)
                 } else {
