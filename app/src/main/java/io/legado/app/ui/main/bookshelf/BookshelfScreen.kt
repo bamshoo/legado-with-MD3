@@ -525,7 +525,7 @@ fun BookshelfScreen(
                         )
                     }
 
-                    if (!isEditMode) {
+                    if (!isEditMode && FanqieGroup.isFanqieGroup(uiState.selectedGroupId)) {
                         TopBarActionButton(
                             onClick = onNavigateToFanqie,
                             imageVector = Icons.Default.Refresh,

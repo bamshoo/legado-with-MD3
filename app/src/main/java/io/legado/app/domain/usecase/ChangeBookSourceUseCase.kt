@@ -299,7 +299,9 @@ class ChangeBookSourceUseCase(
         if (newBook.wordCount.isNullOrBlank()) {
             newBook.wordCount = wordCount
         }
-        FanqieConstants.parseBookId(bookUrl)?.let { fanqieBookId ->
+        val fanqieBookId = FanqieConstants.parseBookId(bookUrl)
+            ?: variableMap[FanqieConstants.BOOK_ID_VARIABLE]
+        if (fanqieBookId != null) {
             newBook.putVariable(FanqieConstants.BOOK_ID_VARIABLE, fanqieBookId)
         }
     }

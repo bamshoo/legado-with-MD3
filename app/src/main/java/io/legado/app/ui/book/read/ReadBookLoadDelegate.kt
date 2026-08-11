@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import io.legado.app.R
 import io.legado.app.constant.AppLog
+import io.legado.app.constant.BookType
 import io.legado.app.constant.EventBus
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
@@ -19,6 +20,12 @@ import io.legado.app.domain.usecase.ChangeBookSourceUseCase
 import io.legado.app.domain.usecase.GetReadingProgressUseCase
 import io.legado.app.domain.usecase.UploadReadingProgressUseCase
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.fanqie.FanqieApi
+import io.legado.app.fanqie.FanqieConstants
+import io.legado.app.fanqie.FanqieConfig
+import io.legado.app.fanqie.FanqieProgressSyncer
+import io.legado.app.fanqie.FanqieShelfRepository
+import io.legado.app.fanqie.FanqieSyncResult
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalModified
@@ -190,6 +197,59 @@ class ReadBookLoadDelegate(
         if (!book.isLocal && ReadBook.bookSource == null) {
             autoChangeSource(book.name, book.author)
             return
+        }
+        syncFanqieProgressIfApplicable(book)
+    }
+
+    private fun syncFanqieProgressIfApplicable(book: Book) {
+        if (!FanqieConfig.autoSyncProgress) {
+            AppLog.put("番茄进度拉取跳过: autoSyncProgress=off bookUrl=${book.bookUrl}")
+            return
+        }
+        val bookId = FanqieConstants.parseBookId(book.bookUrl)
+            ?: book.variableMap[FanqieConstants.BOOK_ID_VARIABLE]
+            ?: run {
+                AppLog.put("番茄进度拉取跳过: not a fanqie book bookUrl=${book.bookUrl}")
+                return
+            }
+        if (!FanqieApi.hasCookie()) {
+            AppLog.put("番茄进度拉取跳过: no cookie bookId=$bookId")
+            return
+        }
+        // 避免短间隔内重复全量同步，至少间隔 10 分钟
+        val lastSync = FanqieConfig.lastSyncTime
+        if (lastSync > 0L && System.currentTimeMillis() - lastSync < 10 * 60 * 1000L) {
+            AppLog.put("番茄进度拉取跳过: too recent lastSync=$lastSync bookId=$bookId")
+            return
+        }
+        AppLog.put("番茄进度拉取开始 bookId=$bookId name=${book.name} chapterIndex=${book.durChapterIndex}")
+        FanqieProgressSyncer.progressUpdateCallback = { bookUrl, chapterIndex, chapterTime ->
+            if (bookUrl == book.bookUrl) {
+                val progress = BookProgress(
+                    name = book.name,
+                    author = book.author,
+                    durChapterIndex = chapterIndex,
+                    durChapterPos = 0,
+                    durChapterTime = chapterTime,
+                    durChapterTitle = null,
+                )
+                ReadBook.setProgress(progress)
+                AppLog.put("番茄云端进度同步到阅读器 bookId=$bookId chapterIndex=$chapterIndex")
+            }
+        }
+        Coroutine.async(scope, Dispatchers.IO) {
+            runCatching { FanqieShelfRepository.syncFromCloud(cloudBooks = emptyList(), progressUpdateCallback = FanqieProgressSyncer.progressUpdateCallback) }
+                .onSuccess { result: FanqieSyncResult ->
+                    FanqieProgressSyncer.progressUpdateCallback = null
+                    AppLog.put("番茄进度拉取完成 bookId=$bookId updated=${result.updated} added=${result.added} removed=${result.removed}")
+                    if (result.updated > 0 || result.added > 0) {
+                        AppLog.put("番茄进度同步完成 bookId=$bookId updated=${result.updated} added=${result.added}")
+                    }
+                }
+                .onFailure { e: Throwable ->
+                    FanqieProgressSyncer.progressUpdateCallback = null
+                    AppLog.put("番茄进度拉取失败 bookId=$bookId ${e.message}", e)
+                }
         }
     }
 

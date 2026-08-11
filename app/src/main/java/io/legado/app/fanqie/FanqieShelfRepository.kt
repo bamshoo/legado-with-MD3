@@ -14,7 +14,10 @@ object FanqieShelfRepository {
     suspend fun syncFromCloud(): FanqieSyncResult =
         syncFromCloud(FanqieApi.fetchShelfBooks())
 
-    suspend fun syncFromCloud(cloudBooks: List<FanqieBook>): FanqieSyncResult {
+    suspend fun syncFromCloud(
+        cloudBooks: List<FanqieBook>,
+        progressUpdateCallback: ((bookUrl: String, chapterIndex: Int, chapterTime: Long) -> Unit)? = null,
+    ): FanqieSyncResult {
         Log.d(TAG, "syncFromCloud: got ${cloudBooks.size} cloud books")
         val groupId = FanqieGroup.ensureGroup()
         val cloudBookIds = cloudBooks.mapTo(HashSet()) { it.bookId }
@@ -38,7 +41,7 @@ object FanqieShelfRepository {
                         "local durIdx=${existing.durChapterIndex} durTime=${existing.durChapterTime} " +
                         "localBookUrl=${existing.bookUrl.take(60)}"
                 )
-                bookDao.update(buildUpdatedBook(existing, cloud, groupId))
+                bookDao.update(buildUpdatedBook(existing, cloud, groupId, progressUpdateCallback))
                 updated++
             }
         }
@@ -62,7 +65,7 @@ object FanqieShelfRepository {
         val bookUrl = FanqieConstants.pageUrl(bookId)
         val book = bookDao.getBook(bookUrl) ?: findByBookId(bookId)
         if (book != null) {
-            bookDao.update(book.copy(group = groupId))
+            bookDao.update(book.copy(group = book.group or groupId))
             return true
         }
         val cloud = FanqieApi.fetchShelfBooks().firstOrNull { it.bookId == bookId }
@@ -125,7 +128,7 @@ object FanqieShelfRepository {
         return book
     }
 
-    private fun buildUpdatedBook(existing: Book, cloud: FanqieBook, groupId: Long): Book {
+    private fun buildUpdatedBook(existing: Book, cloud: FanqieBook, groupId: Long, progressUpdateCallback: ((bookUrl: String, chapterIndex: Int, chapterTime: Long) -> Unit)? = null): Book {
         val name = cloud.name.ifBlank { existing.name }
         val author = cloud.author.ifBlank { existing.author }
         val base = existing.copy(
@@ -135,7 +138,7 @@ object FanqieShelfRepository {
             author = author,
             coverUrl = cloud.coverUrl ?: existing.coverUrl,
             intro = cloud.intro.ifBlank { existing.intro },
-            group = groupId,
+            group = existing.group or groupId,
             latestChapterTitle = cloud.latestChapterTitle ?: existing.latestChapterTitle,
             latestChapterTime = if (cloud.latestChapterTime > 0) cloud.latestChapterTime else existing.latestChapterTime,
             totalChapterNum = if (cloud.totalChapterNum > 0) cloud.totalChapterNum else existing.totalChapterNum,
@@ -146,12 +149,15 @@ object FanqieShelfRepository {
         val cloudReadMs = cloud.readTimestamp * 1000L
         val cloudAhead = cloudIdx > existing.durChapterIndex ||
             (cloudIdx == existing.durChapterIndex && cloudReadMs > 0 && cloudReadMs > existing.durChapterTime)
+        Log.d(TAG, "buildUpdatedBook: cloudAhead=$cloudAhead bookId=${cloud.bookId} localIdx=${existing.durChapterIndex} cloudIdx=$cloudIdx localTime=${existing.durChapterTime} cloudTime=$cloudReadMs")
         return if (cloudAhead) {
-            base.copy(
+            val updated = base.copy(
                 durChapterTitle = cloud.readChapterTitle.ifBlank { base.durChapterTitle },
                 durChapterIndex = cloudIdx,
                 durChapterTime = if (cloudReadMs > 0) cloudReadMs else existing.durChapterTime,
             )
+            progressUpdateCallback?.invoke(existing.bookUrl, cloudIdx, cloudReadMs)
+            updated
         } else {
             base
         }

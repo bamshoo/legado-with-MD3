@@ -13,6 +13,7 @@ import io.legado.app.help.AppWebDav
 import io.legado.app.help.DirectLinkUpload
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.config.AppConfig
+import io.legado.app.fanqie.FanqieConstants
 import io.legado.app.help.config.AppConfigStore
 import io.legado.app.help.config.LocalConfig
 import io.legado.app.help.config.ReadBookConfig
@@ -142,7 +143,10 @@ object Backup {
         val aes = BackupAES()
         FileUtils.delete(backupPath)
         writeListToJson(
-            appDb.bookDao.all.filterNot { BackupConfig.backupIgnoreLocalBook && it.isLocal },
+            appDb.bookDao.all.filterNot {
+                (BackupConfig.backupIgnoreLocalBook && it.isLocal) ||
+                    it.variableMap.containsKey(FanqieConstants.BOOK_ID_VARIABLE)
+            },
             "bookshelf.json",
             backupPath,
         )

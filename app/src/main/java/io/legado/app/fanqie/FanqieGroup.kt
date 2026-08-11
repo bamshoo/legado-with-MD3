@@ -6,7 +6,9 @@ import io.legado.app.data.entities.BookGroup
 
 object FanqieGroup {
 
-    private const val ID_FALLBACK = 1L shl 40
+    // 固定 ID，远离 getUnusedId() 可能产生的幂次 ID（1,2,4,...,2^61），
+    // 同一设备 ID 不会冲突；跨设备恢复时由 afterRestore 按名称兜底，不影响正确性。
+    const val FIXED_ID = 1L shl 62
 
     fun isFanqieGroup(groupId: Long): Boolean {
         val current = FanqieConfig.groupId
@@ -20,7 +22,7 @@ object FanqieGroup {
                 return id
             }
         }
-        // 恢复备份后组可能以其它 id 存在（备份自包含番茄组），按名称找回，避免重复建组
+        // 按名称找回（跨设备恢复时 GROUP_NAME 存在但 ID 可能不同）
         appDb.bookGroupDao.getByName(FanqieConstants.GROUP_NAME)?.let { group ->
             if (group.groupId > 0) {
                 ensurePrivate(group)
@@ -30,7 +32,7 @@ object FanqieGroup {
         }
         return appDb.withTransaction {
             val groupDao = appDb.bookGroupDao
-            val groupId = groupDao.getUnusedId().let { if (it <= 0) ID_FALLBACK else it }
+            val groupId = FIXED_ID
             if (groupDao.getByID(groupId) == null) {
                 appDb.bookDao.removeGroup(groupId)
             }
@@ -72,7 +74,7 @@ object FanqieGroup {
         val newId = when {
             byName != null && byName.groupId > 0 -> byName.groupId
             groupId > 0 && groupDao.getByID(groupId) == null -> groupId
-            else -> groupDao.getUnusedId().let { if (it <= 0) ID_FALLBACK else it }
+            else -> FIXED_ID
         }
         if (newId <= 0) return
         if (groupDao.getByID(newId) == null) {
