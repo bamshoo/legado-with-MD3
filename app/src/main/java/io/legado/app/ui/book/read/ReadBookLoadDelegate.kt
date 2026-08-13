@@ -238,7 +238,7 @@ class ReadBookLoadDelegate(
             }
         }
         Coroutine.async(scope, Dispatchers.IO) {
-            runCatching { FanqieShelfRepository.syncFromCloud(cloudBooks = emptyList(), progressUpdateCallback = FanqieProgressSyncer.progressUpdateCallback) }
+            runCatching { FanqieShelfRepository.syncFromCloud(FanqieApi.fetchShelfBooks(), FanqieProgressSyncer.progressUpdateCallback) }
                 .onSuccess { result: FanqieSyncResult ->
                     FanqieProgressSyncer.progressUpdateCallback = null
                     AppLog.put("番茄进度拉取完成 bookId=$bookId updated=${result.updated} added=${result.added} removed=${result.removed}")

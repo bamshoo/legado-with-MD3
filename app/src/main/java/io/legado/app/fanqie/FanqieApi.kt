@@ -1,12 +1,12 @@
 package io.legado.app.fanqie
 
-import android.util.Log
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import io.legado.app.help.http.CookieManager.cookieJarHeader
 import io.legado.app.help.http.CookieStore
 import io.legado.app.help.http.okHttpClient
+import io.legado.app.utils.LogUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -216,7 +216,7 @@ object FanqieApi {
             )
         }
         fillMissingAuthors(result)
-        Log.d(TAG, "fetchShelfBooks: parsed ${result.size} books")
+        LogUtils.d(TAG, "fetchShelfBooks: parsed ${result.size} books")
         return result
     }
 
@@ -313,13 +313,13 @@ object FanqieApi {
             val root = postJson(FanqieConstants.MULTIDETAIL_URL, payload.toString())
             val data = root.get("data")?.asJsonObject
             if (data == null) {
-                Log.e(TAG, "multidetail: no data, code=${root.get("code")}, keys=${root.keySet()}")
+                LogUtils.e(TAG, "multidetail: no data, code=${root.get("code")}, keys=${root.keySet()}")
                 return emptyMap()
             }
-            Log.d(TAG, "multidetail: code=${root.get("code")}, data keys=${data.keySet()}")
+            LogUtils.d(TAG, "multidetail: code=${root.get("code")}, data keys=${data.keySet()}")
             val detailList = data.get("detail_list")?.asJsonArray
             if (detailList == null) {
-                Log.e(TAG, "multidetail: no detail_list in data")
+                LogUtils.e(TAG, "multidetail: no detail_list in data")
                 return emptyMap()
             }
             for (element in detailList) {
@@ -327,14 +327,14 @@ object FanqieApi {
                 val bookId = detail.get("book_id")?.asString ?: continue
                 result[bookId] = detail
             }
-            Log.d(
+            LogUtils.d(
                 TAG,
                 "multidetail: parsed ${result.size} details, " +
                     "sample keys=${detailList.firstOrNull()?.asJsonObject?.keySet()}",
             )
             result
         } catch (e: Exception) {
-            Log.e(TAG, "multidetail failed: ${e.message}", e)
+            LogUtils.e(TAG, "multidetail failed: ${e.message}\n${e.stackTraceToString()}")
             result
         }
     }
@@ -361,7 +361,7 @@ object FanqieApi {
     }
 
     suspend fun updateProgress(bookId: String, itemId: String, index: Int, readProgress: Float) {
-        Log.d(TAG, "updateProgress: bookId=$bookId itemId=$itemId index=$index fraction=$readProgress")
+        LogUtils.d(TAG, "updateProgress: bookId=$bookId itemId=$itemId index=$index fraction=$readProgress")
         val payload = JsonObject()
         payload.addProperty("book_id", bookId)
         payload.addProperty("item_id", itemId)

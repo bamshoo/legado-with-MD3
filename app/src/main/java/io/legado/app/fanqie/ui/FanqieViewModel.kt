@@ -1,6 +1,6 @@
 package io.legado.app.fanqie.ui
 
-import android.util.Log
+import io.legado.app.utils.LogUtils
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.data.appDb
@@ -93,7 +93,7 @@ class FanqieViewModel : ViewModel() {
                     )
                 }
             }.onFailure { e ->
-                Log.e("FanqieVM", "load/sync failed", e)
+                LogUtils.e("FanqieVM", "load/sync failed: ${e.message}\n${e.stackTraceToString()}")
                 val authFailed = e is FanqieAuthException
                 _uiState.update {
                     it.copy(

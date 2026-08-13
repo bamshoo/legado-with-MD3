@@ -134,7 +134,7 @@ Legado 的 **Material Design 3 分支**（阅读器 App）。三层 Clean Archit
 - `ui/book/read/ReadBookViewModel.kt` `onCleared()`：调 `FanqieProgressSyncer.flush()`（阅读会话真正结束）。
 - `ui/book/read/ReadBookLoadDelegate.kt` `syncFanqieProgressIfApplicable()`：开番茄书时异步拉取云端进度，10 分钟间隔保护；云端进度更新时通过回调调 `ReadBook.setProgress()` 同步当前阅读会话。
 - `fanqie/FanqieGroup.kt`：番茄组固定 ID `FIXED_ID = 1L shl 62`，永不与 `getUnusedId()` 冲突。
-- `fanqie/FanqieShelfRepository.kt`：`syncFromCloud` 的 `buildUpdatedBook` 用 `existing.group or groupId`（按位或），不清空其他分组。
+- `fanqie/FanqieShelfRepository.kt`：`syncFromCloud` 的 `buildUpdatedBook`/`addToLocalShelf` 用 `group = groupId`（番茄书仅属于番茄组）；移除清理仅在 `cloudBooks.isNotEmpty()` 时执行。
 - `domain/usecase/ChangeBookSourceUseCase.kt`：换源时从 `oldBook.variableMap` 兜底保留 `fanqieBookId`。
 
 ### 语义约定（容易踩坑）

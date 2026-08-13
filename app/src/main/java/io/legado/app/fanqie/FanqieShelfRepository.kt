@@ -1,6 +1,6 @@
 package io.legado.app.fanqie
 
-import android.util.Log
+import io.legado.app.utils.LogUtils
 import io.legado.app.constant.BookType
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
@@ -18,7 +18,7 @@ object FanqieShelfRepository {
         cloudBooks: List<FanqieBook>,
         progressUpdateCallback: ((bookUrl: String, chapterIndex: Int, chapterTime: Long) -> Unit)? = null,
     ): FanqieSyncResult {
-        Log.d(TAG, "syncFromCloud: got ${cloudBooks.size} cloud books")
+        LogUtils.d(TAG, "syncFromCloud: got ${cloudBooks.size} cloud books")
         val groupId = FanqieGroup.ensureGroup()
         val cloudBookIds = cloudBooks.mapTo(HashSet()) { it.bookId }
 
@@ -30,11 +30,11 @@ object FanqieShelfRepository {
             val existing = localBooks.firstOrNull { it.bookUrl == bookUrl }
                 ?: findChangedSourceBook(localBooks, cloud, groupId)
             if (existing == null) {
-                Log.d(TAG, "add new bookId=${cloud.bookId} name=${cloud.name} readIdx=${cloud.readChapterIndex} readTs=${cloud.readTimestamp}")
+                LogUtils.d(TAG, "add new bookId=${cloud.bookId} name=${cloud.name} readIdx=${cloud.readChapterIndex} readTs=${cloud.readTimestamp}")
                 bookDao.insert(buildNewBook(cloud, bookUrl, groupId))
                 added++
             } else {
-                Log.d(
+                LogUtils.d(
                     TAG,
                     "update bookId=${cloud.bookId} name=${cloud.name} " +
                         "cloud readIdx=${cloud.readChapterIndex} readTs=${cloud.readTimestamp} " +
@@ -47,12 +47,14 @@ object FanqieShelfRepository {
         }
 
         var removed = 0
-        for (local in localBooks) {
-            if (local.group and groupId == 0L) continue
-            val bookId = FanqieConstants.parseBookId(local.bookUrl) ?: continue
-            if (bookId !in cloudBookIds) {
-                bookDao.update(local.copy(group = local.group and groupId.inv()))
-                removed++
+        if (cloudBooks.isNotEmpty()) {
+            for (local in localBooks) {
+                if (local.group and groupId == 0L) continue
+                val bookId = FanqieConstants.parseBookId(local.bookUrl) ?: continue
+                if (bookId !in cloudBookIds) {
+                    bookDao.update(local.copy(group = local.group and groupId.inv()))
+                    removed++
+                }
             }
         }
 
@@ -65,7 +67,7 @@ object FanqieShelfRepository {
         val bookUrl = FanqieConstants.pageUrl(bookId)
         val book = bookDao.getBook(bookUrl) ?: findByBookId(bookId)
         if (book != null) {
-            bookDao.update(book.copy(group = book.group or groupId))
+            bookDao.update(book.copy(group = groupId))
             return true
         }
         val cloud = FanqieApi.fetchShelfBooks().firstOrNull { it.bookId == bookId }
@@ -138,7 +140,7 @@ object FanqieShelfRepository {
             author = author,
             coverUrl = cloud.coverUrl ?: existing.coverUrl,
             intro = cloud.intro.ifBlank { existing.intro },
-            group = existing.group or groupId,
+            group = groupId,
             latestChapterTitle = cloud.latestChapterTitle ?: existing.latestChapterTitle,
             latestChapterTime = if (cloud.latestChapterTime > 0) cloud.latestChapterTime else existing.latestChapterTime,
             totalChapterNum = if (cloud.totalChapterNum > 0) cloud.totalChapterNum else existing.totalChapterNum,
@@ -149,7 +151,7 @@ object FanqieShelfRepository {
         val cloudReadMs = cloud.readTimestamp * 1000L
         val cloudAhead = cloudIdx > existing.durChapterIndex ||
             (cloudIdx == existing.durChapterIndex && cloudReadMs > 0 && cloudReadMs > existing.durChapterTime)
-        Log.d(TAG, "buildUpdatedBook: cloudAhead=$cloudAhead bookId=${cloud.bookId} localIdx=${existing.durChapterIndex} cloudIdx=$cloudIdx localTime=${existing.durChapterTime} cloudTime=$cloudReadMs")
+        LogUtils.d(TAG, "buildUpdatedBook: cloudAhead=$cloudAhead bookId=${cloud.bookId} localIdx=${existing.durChapterIndex} cloudIdx=$cloudIdx localTime=${existing.durChapterTime} cloudTime=$cloudReadMs")
         return if (cloudAhead) {
             val updated = base.copy(
                 durChapterTitle = cloud.readChapterTitle.ifBlank { base.durChapterTitle },

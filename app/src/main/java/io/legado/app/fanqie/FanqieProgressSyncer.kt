@@ -1,8 +1,8 @@
 package io.legado.app.fanqie
 
-import android.util.Log
 import io.legado.app.model.LegacyReaderSnapshot
 import io.legado.app.model.ReadBook
+import io.legado.app.utils.LogUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,24 +30,24 @@ object FanqieProgressSyncer {
 
     fun start() {
         if (!started.compareAndSet(false, true)) {
-            Log.d(TAG, "start: already started, skip")
+            LogUtils.d(TAG, "start: already started, skip")
             return
         }
-        Log.d(TAG, "start: progress syncer enabled, will report on snapshot changes (debounce=${DEBOUNCE_MS}ms)")
+        LogUtils.d(TAG, "start: progress syncer enabled, will report on snapshot changes (debounce=${DEBOUNCE_MS}ms)")
         scope.launch {
             ReadBook.snapshot.map { Triple(it, it.bookUrl, resolveBookId(it.bookUrl)) }
                 .collect { (snapshot, _, bookId) ->
                     if (bookId == null) return@collect
                     if (!FanqieConfig.autoSyncProgress) {
-                        Log.d(TAG, "snapshot: autoSyncProgress off, skip")
+                        LogUtils.d(TAG, "snapshot: autoSyncProgress off, skip")
                         return@collect
                     }
                     if (snapshot.isLocalBook) return@collect
                     if (!FanqieApi.hasCookie()) {
-                        Log.d(TAG, "snapshot: no cookie, skip")
+                        LogUtils.d(TAG, "snapshot: no cookie, skip")
                         return@collect
                     }
-                    Log.d(TAG, "snapshot: bookId=$bookId chapterIndex=${snapshot.chapterIndex} pos=${snapshot.chapterPos} → schedule debounce")
+                    LogUtils.d(TAG, "snapshot: bookId=$bookId chapterIndex=${snapshot.chapterIndex} pos=${snapshot.chapterPos} → schedule debounce")
                     // 取消该 book 已挂起的防抖，重新计时，保证每次 snapshot 变化都会触发上报
                     pendingDebounce[bookId]?.cancel()
                     pendingDebounce[bookId] = scope.launch {
@@ -68,24 +68,24 @@ object FanqieProgressSyncer {
         scope.launch {
             val snapshot = ReadBook.snapshot.value
             if (!FanqieConfig.autoSyncProgress) {
-                Log.d(TAG, "flush: autoSyncProgress off")
+                LogUtils.d(TAG, "flush: autoSyncProgress off")
                 return@launch
             }
             if (snapshot.isLocalBook) {
-                Log.d(TAG, "flush: local book")
+                LogUtils.d(TAG, "flush: local book")
                 return@launch
             }
             val bookId = resolveBookId(snapshot.bookUrl) ?: run {
-                Log.d(TAG, "flush: no bookId, bookUrl=${snapshot.bookUrl}")
+                LogUtils.d(TAG, "flush: no bookId, bookUrl=${snapshot.bookUrl}")
                 return@launch
             }
             if (!FanqieApi.hasCookie()) {
-                Log.d(TAG, "flush: no cookie")
+                LogUtils.d(TAG, "flush: no cookie")
                 return@launch
             }
             // 取消该 book 的待执行防抖，立即上报
             pendingDebounce.remove(bookId)?.cancel()
-            Log.d(TAG, "flush: report bookId=$bookId chapterIndex=${snapshot.chapterIndex}")
+            LogUtils.d(TAG, "flush: report bookId=$bookId chapterIndex=${snapshot.chapterIndex}")
             report(snapshot, bookId)
         }
     }
@@ -102,29 +102,29 @@ object FanqieProgressSyncer {
 
     private suspend fun report(snapshot: LegacyReaderSnapshot, bookId: String) {
         if (snapshot.chapterIndex < 0) {
-            Log.d(TAG, "report: chapterIndex<0 skip")
+            LogUtils.d(TAG, "report: chapterIndex<0 skip")
             return
         }
         val chapters = directory(bookId) ?: run {
-            Log.d(TAG, "report: directory null, fetch failed")
+            LogUtils.d(TAG, "report: directory null, fetch failed")
             return
         }
-        Log.d(TAG, "report: directory ok chapters=${chapters.size} bookId=$bookId")
+        LogUtils.d(TAG, "report: directory ok chapters=${chapters.size} bookId=$bookId")
         val chapter = chapters.getOrNull(snapshot.chapterIndex) ?: run {
-            Log.d(TAG, "report: chapter not found idx=${snapshot.chapterIndex} size=${chapters.size}")
+            LogUtils.d(TAG, "report: chapter not found idx=${snapshot.chapterIndex} size=${chapters.size}")
             return
         }
         val lastChapter = lastReportedChapter[bookId]
         if (lastChapter != null && lastChapter == snapshot.chapterIndex) {
-            Log.d(TAG, "report: same chapter skip bookId=$bookId chapterIndex=${snapshot.chapterIndex}")
+            LogUtils.d(TAG, "report: same chapter skip bookId=$bookId chapterIndex=${snapshot.chapterIndex}")
             return
         }
         val cloudIndex = cloudChapterIndex(bookId)
         if (cloudIndex != null && snapshot.chapterIndex < cloudIndex) {
-            Log.d(TAG, "report: behind cloud skip local=${snapshot.chapterIndex} cloud=$cloudIndex")
+            LogUtils.d(TAG, "report: behind cloud skip local=${snapshot.chapterIndex} cloud=$cloudIndex")
             return
         }
-        Log.d(TAG, "report: send bookId=$bookId chapterIndex=${snapshot.chapterIndex} itemId=${chapter.itemId} fraction=${"%.4f".format(((snapshot.chapterIndex + 0.5f) / chapters.size).coerceIn(0f, 1f))}")
+        LogUtils.d(TAG, "report: send bookId=$bookId chapterIndex=${snapshot.chapterIndex} itemId=${chapter.itemId} fraction=${"%.4f".format(((snapshot.chapterIndex + 0.5f) / chapters.size).coerceIn(0f, 1f))}")
         val fraction = if (chapters.size > 0) {
             ((snapshot.chapterIndex + 0.5f) / chapters.size).coerceIn(0f, 1f)
         } else {
@@ -133,10 +133,10 @@ object FanqieProgressSyncer {
         runCatching { FanqieApi.updateProgress(bookId, chapter.itemId, snapshot.chapterIndex, fraction) }
             .onSuccess {
                 lastReportedChapter[bookId] = snapshot.chapterIndex
-                Log.d(TAG, "report: ok bookId=$bookId chapterIndex=${snapshot.chapterIndex} fraction=$fraction")
+                LogUtils.d(TAG, "report: ok bookId=$bookId chapterIndex=${snapshot.chapterIndex} fraction=$fraction")
             }
             .onFailure { e ->
-                Log.e(TAG, "report: failed bookId=$bookId ${e.message}")
+                LogUtils.e(TAG, "report: failed bookId=$bookId ${e.message}\n${e.stackTraceToString()}")
             }
     }
 
