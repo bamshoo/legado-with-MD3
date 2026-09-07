@@ -10,6 +10,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -53,6 +55,7 @@ import io.legado.app.ui.about.UpdateDialog
 import io.legado.app.ui.book.read.ReadBookInputHandler
 import io.legado.app.ui.book.read.ReadBookRouteHost
 import io.legado.app.ui.book.read.page.entities.PageDirection
+import io.legado.app.domain.model.settings.isEInkMode
 import io.legado.app.ui.theme.LocalAppUiConfiguration
 import io.legado.app.ui.welcome.WelcomeActivity
 import io.legado.app.ui.widget.dialog.TextDialog
@@ -338,6 +341,7 @@ open class MainActivity : BaseComposeActivity() {
                 }
         }
 
+        val eInkNoTransition = EnterTransition.None togetherWith ExitTransition.None
         SharedTransitionLayout {
             NavDisplay(
                 backStack = backStack,
@@ -350,7 +354,7 @@ open class MainActivity : BaseComposeActivity() {
                     SinglePaneSceneStrategy(),
                 ),
                 transitionSpec = {
-                    (slideIntoContainer(
+                    if (configuration.theme.isEInkMode) eInkNoTransition else (slideIntoContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.Start,
                         animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
                         initialOffset = { fullWidth -> fullWidth }
@@ -371,7 +375,7 @@ open class MainActivity : BaseComposeActivity() {
                     ))
                 },
                 popTransitionSpec = {
-                    (slideIntoContainer(
+                    if (configuration.theme.isEInkMode) eInkNoTransition else (slideIntoContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.Start,
                         animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
                         initialOffset = { fullWidth -> -fullWidth / 4 }
@@ -386,7 +390,7 @@ open class MainActivity : BaseComposeActivity() {
                     ) + fadeOut(animationSpec = tween(durationMillis = 360)))
                 },
                 predictivePopTransitionSpec = { _ ->
-                    (slideIntoContainer(
+                    if (configuration.theme.isEInkMode) eInkNoTransition else (slideIntoContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.Start,
                         animationSpec = tween(easing = FastOutSlowInEasing),
                         initialOffset = { fullWidth -> -fullWidth / 4 }

@@ -4,6 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.tween
@@ -31,6 +33,7 @@ import androidx.navigation3.ui.NavDisplay
 import io.legado.app.R
 import io.legado.app.domain.model.BookSearchScope
 import io.legado.app.domain.model.settings.AppUiConfiguration
+import io.legado.app.domain.model.settings.isEInkMode
 import io.legado.app.model.Download
 import io.legado.app.fanqie.ui.FanqieScreen
 import io.legado.app.fanqie.ui.FanqieViewModel
@@ -831,32 +834,23 @@ fun MainActivity.mainEntryProvider(
     }
 
     entry<MainRouteBookInfo>(
-        metadata = NavDisplay.transitionSpec {
-            val from = initialState.key
-            val fromStr = from.toString()
-            if (from is MainRouteHome || from is MainRouteExploreShow || from is MainRouteSearch ||
-                fromStr.startsWith("MainRouteHome") || fromStr.startsWith("MainRouteExploreShow") || fromStr.startsWith(
-                    "MainRouteSearch"
-                )
-            ) {
-                fadeIn(animationSpec = tween(300)) togetherWith
-                        fadeOut(animationSpec = tween(300))
-            } else null
-        } + NavDisplay.popTransitionSpec {
-            val to = targetState.key
-            val toStr = to.toString()
-            if (to is MainRouteHome || to is MainRouteExploreShow || to is MainRouteSearch ||
-                toStr.startsWith("MainRouteHome") || toStr.startsWith("MainRouteExploreShow") || toStr.startsWith(
-                    "MainRouteSearch"
-                )
-            ) {
-                fadeIn(animationSpec = tween(300)) togetherWith
-                        fadeOut(animationSpec = tween(300))
-            } else null
-        } + NavDisplay.predictivePopTransitionSpec { _ ->
-            if (!configuration.appShell.predictiveBackEnabled) {
-                null
-            } else {
+        metadata = if (configuration.theme.isEInkMode) {
+            NavDisplay.transitionSpec { EnterTransition.None togetherWith ExitTransition.None } +
+            NavDisplay.popTransitionSpec { EnterTransition.None togetherWith ExitTransition.None } +
+            NavDisplay.predictivePopTransitionSpec { _ -> EnterTransition.None togetherWith ExitTransition.None }
+        } else {
+            NavDisplay.transitionSpec {
+                val from = initialState.key
+                val fromStr = from.toString()
+                if (from is MainRouteHome || from is MainRouteExploreShow || from is MainRouteSearch ||
+                    fromStr.startsWith("MainRouteHome") || fromStr.startsWith("MainRouteExploreShow") || fromStr.startsWith(
+                        "MainRouteSearch"
+                    )
+                ) {
+                    fadeIn(animationSpec = tween(300)) togetherWith
+                            fadeOut(animationSpec = tween(300))
+                } else null
+            } + NavDisplay.popTransitionSpec {
                 val to = targetState.key
                 val toStr = to.toString()
                 if (to is MainRouteHome || to is MainRouteExploreShow || to is MainRouteSearch ||
@@ -867,6 +861,21 @@ fun MainActivity.mainEntryProvider(
                     fadeIn(animationSpec = tween(300)) togetherWith
                             fadeOut(animationSpec = tween(300))
                 } else null
+            } + NavDisplay.predictivePopTransitionSpec { _ ->
+                if (!configuration.appShell.predictiveBackEnabled) {
+                    null
+                } else {
+                    val to = targetState.key
+                    val toStr = to.toString()
+                    if (to is MainRouteHome || to is MainRouteExploreShow || to is MainRouteSearch ||
+                        toStr.startsWith("MainRouteHome") || toStr.startsWith("MainRouteExploreShow") || toStr.startsWith(
+                            "MainRouteSearch"
+                        )
+                    ) {
+                        fadeIn(animationSpec = tween(300)) togetherWith
+                                fadeOut(animationSpec = tween(300))
+                    } else null
+                }
             }
         }
     ) { route ->

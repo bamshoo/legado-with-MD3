@@ -1,9 +1,12 @@
 package io.legado.app.utils
 
 import android.app.Dialog
+import android.view.Gravity
 import android.view.WindowManager
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
+import io.legado.app.R
+import io.legado.app.help.config.AppConfig
 //import io.legado.app.lib.theme.accentColor
 //import io.legado.app.lib.theme.filletBackground
 import splitties.systemservices.windowManager
@@ -77,4 +80,26 @@ fun DialogFragment.setLayout(width: Int, height: Int) {
 
 fun Dialog.setLayout(width: Int, height: Int) {
     window?.setLayout(width, height)
+}
+
+fun Dialog.applyEInkBorderIfNeeded() {
+    if (AppConfig.isEInkMode) {
+        window?.let {
+            it.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            val attr = it.attributes
+            attr.dimAmount = 0.0f
+            attr.windowAnimations = 0
+            it.attributes = attr
+            it.setBackgroundDrawableResource(R.color.transparent)
+            when (attr.gravity) {
+                Gravity.TOP -> it.decorView.setBackgroundResource(R.drawable.bg_eink_border_bottom)
+                Gravity.BOTTOM -> it.decorView.setBackgroundResource(R.drawable.bg_eink_border_top)
+                else -> {
+                    val padding = 2.dpToPx()
+                    it.decorView.setPadding(padding, padding, padding, padding)
+                    it.decorView.setBackgroundResource(R.drawable.bg_eink_border_dialog)
+                }
+            }
+        }
+    }
 }

@@ -11,9 +11,6 @@ object FanqieShelfRepository {
 
     private val bookDao get() = appDb.bookDao
 
-    suspend fun syncFromCloud(): FanqieSyncResult =
-        syncFromCloud(FanqieApi.fetchShelfBooks())
-
     suspend fun syncFromCloud(
         cloudBooks: List<FanqieBook>,
         progressUpdateCallback: ((bookUrl: String, chapterIndex: Int, chapterTime: Long) -> Unit)? = null,
@@ -23,11 +20,12 @@ object FanqieShelfRepository {
         val cloudBookIds = cloudBooks.mapTo(HashSet()) { it.bookId }
 
         val localBooks = bookDao.getAll()
+        val localBooksMap = localBooks.associateBy { it.bookUrl }
         var added = 0
         var updated = 0
         for (cloud in cloudBooks) {
             val bookUrl = FanqieConstants.pageUrl(cloud.bookId)
-            val existing = localBooks.firstOrNull { it.bookUrl == bookUrl }
+            val existing = localBooksMap[bookUrl]
                 ?: findChangedSourceBook(localBooks, cloud, groupId)
             if (existing == null) {
                 LogUtils.d(TAG, "add new bookId=${cloud.bookId} name=${cloud.name} readIdx=${cloud.readChapterIndex} readTs=${cloud.readTimestamp}")

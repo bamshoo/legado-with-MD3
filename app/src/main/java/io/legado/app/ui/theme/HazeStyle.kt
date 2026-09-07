@@ -8,6 +8,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import io.legado.app.domain.model.settings.isEInkMode
 import io.legado.app.ui.theme.hazeStyle.HazeLegado
 import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.GlassDefaults
@@ -17,9 +18,12 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 自动感知全局配置的 HazeSource
  */
 @Composable
-fun Modifier.responsiveHazeSource(state: HazeState): Modifier = this.then(
-    if (LocalAppUiConfiguration.current.theme.enableBlur) Modifier.hazeSource(state) else Modifier
-)
+fun Modifier.responsiveHazeSource(state: HazeState): Modifier {
+    val theme = LocalAppUiConfiguration.current.theme
+    return this.then(
+        if (theme.enableBlur && !theme.isEInkMode) Modifier.hazeSource(state) else Modifier
+    )
+}
 
 /**
  * 自动感知全局配置的 HazeEffect
@@ -30,7 +34,7 @@ fun Modifier.responsiveHazeEffect(
     state: HazeState
 ): Modifier {
     val themeSettings = LocalAppUiConfiguration.current.theme
-    val enableBlur = themeSettings.enableBlur
+    val enableBlur = themeSettings.enableBlur && !themeSettings.isEInkMode
     val enableProgressiveBlur = themeSettings.enableProgressiveBlur
     val composeEngine = LegadoTheme.composeEngine
     val containerColor = GlassDefaults.secondaryColorOr {
@@ -66,7 +70,8 @@ fun Modifier.responsiveHazeEffect(
 fun Modifier.responsiveHazeEffectFixedStyle(
     state: HazeState
 ): Modifier {
-    val enableBlur = LocalAppUiConfiguration.current.theme.enableBlur
+    val theme = LocalAppUiConfiguration.current.theme
+    val enableBlur = theme.enableBlur && !theme.isEInkMode
     val composeEngine = LegadoTheme.composeEngine
     val containerColor = GlassDefaults.secondaryColorOr {
         if (ThemeResolver.isMiuixEngine(composeEngine)) MiuixTheme.colorScheme.surface
@@ -95,7 +100,8 @@ fun Modifier.responsiveHazeEffectFixedStyle(
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun Modifier.regularHazeEffect(state: HazeState): Modifier {
-    val enableBlur = LocalAppUiConfiguration.current.theme.enableBlur
+    val theme = LocalAppUiConfiguration.current.theme
+    val enableBlur = theme.enableBlur && !theme.isEInkMode
     val composeEngine = LegadoTheme.composeEngine
     val containerColor = GlassDefaults.secondaryColorOr {
         if (ThemeResolver.isMiuixEngine(composeEngine)) MiuixTheme.colorScheme.surface

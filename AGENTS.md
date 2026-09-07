@@ -10,8 +10,8 @@ Legado 的 **Material Design 3 分支**（阅读器 App）。三层 Clean Archit
 |---|---|
 | 架构（三层、顶层包、模块、混合 Compose+View、Rhino JS 引擎） | `docs/agents/architecture.md` |
 | 依赖注入（Koin） | `docs/agents/koin-di.md` |
-| 导航（Navigation 3） | `docs/agents/navigation.md` |
-| 主题系统（M3 Expressive / Miuix） | `docs/agents/theme-system.md` |
+| 导航（Navigation 3，含墨水屏转场短路） | `docs/agents/navigation.md` |
+| 主题系统（M3 Expressive / Miuix / 墨水屏模式） | `docs/agents/theme-system.md` |
 | Compose 界面开发规范（MVI/UDF 模板与示例代码） | `docs/agents/compose-guidelines.md` |
 | 番茄小说云同步集成（feature/fanqie-sync 分支） | `docs/agents/fanqie-sync.md` |
 

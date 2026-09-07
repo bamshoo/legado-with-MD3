@@ -61,6 +61,7 @@
 9. **番茄同步按钮出现在所有分组页**：`BookshelfScreen` 中按钮条件加 `FanqieGroup.isFanqieGroup(selectedGroupId)` 判断。
 10. **番茄组 ID 固定**：`FanqieGroup` 使用 `FIXED_ID = 1L shl 62`，永不与 `getUnusedId()` 产生的幂次 ID 冲突。
 11. **开书同步误传 emptyList 清空番茄组**：`ReadBookLoadDelegate` 曾传 `syncFromCloud(cloudBooks = emptyList())`，移除循环拿空列表比对后把未换源番茄书的组位全清成"未分组"；改为真实 `FanqieApi.fetchShelfBooks()`，且移除循环加 `cloudBooks.isNotEmpty()` 防御。
+12. **番茄书架查询性能优化**：`FanqieViewModel.load()` 加载本地番茄书时由全量 `appDb.bookDao.getAll().filter(...)` 优化为 Room 数据库直接查询 `appDb.bookDao.getBooksByGroup(groupId)`。
 
 调试日志保留：`FanqieProgressSyncer`（TAG=`FanqieProgress`，逐条件打日志）+ `FanqieApi.updateProgress`（bookId/itemId/index/fraction）。
 

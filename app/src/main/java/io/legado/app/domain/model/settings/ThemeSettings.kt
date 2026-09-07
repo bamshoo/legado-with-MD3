@@ -75,6 +75,9 @@ data class ThemeSettings(
 val ThemeSettings.isEyeProtectionConfigured: Boolean
     get() = eyeProtectionEnabled || eyeProtectionAutoNight
 
+val ThemeSettings.isEInkMode: Boolean
+    get() = appTheme == "4"
+
 data class ThemeCustomColors(
     val primary: Int,
     val secondary: Int,

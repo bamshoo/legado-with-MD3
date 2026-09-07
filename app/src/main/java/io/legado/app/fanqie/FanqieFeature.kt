@@ -35,7 +35,7 @@ object FanqieFeature {
             while (true) {
                 delay(SYNC_INTERVAL_MS)
                 if (!FanqieApi.hasCookie()) continue
-                runCatching { FanqieShelfRepository.syncFromCloud() }
+                runCatching { FanqieShelfRepository.syncFromCloud(FanqieApi.fetchShelfBooks()) }
             }
         }
     }

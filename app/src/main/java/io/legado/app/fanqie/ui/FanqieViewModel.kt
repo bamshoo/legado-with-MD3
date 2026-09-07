@@ -71,8 +71,7 @@ class FanqieViewModel : ViewModel() {
                 val groupId = FanqieGroup.ensureGroup()
                 val cloudBooks = FanqieApi.fetchShelfBooks().distinctBy { it.bookId }
                 FanqieShelfRepository.syncFromCloud(cloudBooks)
-                val localBooks = appDb.bookDao.getAll()
-                    .filter { it.group and groupId != 0L }
+                val localBooks = appDb.bookDao.getBooksByGroup(groupId)
                 val localUrls = localBooks.mapTo(HashSet()) { it.bookUrl }
                 val localBookIds = localBooks
                     .mapNotNullTo(HashSet()) {
@@ -111,7 +110,7 @@ class FanqieViewModel : ViewModel() {
     private fun syncNow() {
         viewModelScope.launch {
             _uiState.update { it.copy(error = null) }
-            runCatching { FanqieShelfRepository.syncFromCloud() }
+            runCatching { FanqieShelfRepository.syncFromCloud(FanqieApi.fetchShelfBooks()) }
                 .onSuccess { result ->
                     _effects.tryEmit(
                         FanqieEffect.ShowToast(
