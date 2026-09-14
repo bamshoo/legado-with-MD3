@@ -3,11 +3,11 @@ package io.legado.app.ui.book.read
 import io.legado.app.constant.EventBus
 import io.legado.app.constant.PreferKey
 import io.legado.app.constant.ReadMenuBlurMode
-import io.legado.app.domain.gateway.ReadStyleGateway
 import io.legado.app.data.repository.ReadSettingsRepository
 import io.legado.app.domain.gateway.ReadStyleBooleanKey
 import io.legado.app.domain.gateway.ReadStyleColorKey
 import io.legado.app.domain.gateway.ReadStyleFloatKey
+import io.legado.app.domain.gateway.ReadStyleGateway
 import io.legado.app.domain.gateway.ReadStyleIntKey
 import io.legado.app.domain.gateway.ReadStyleMutation
 import io.legado.app.domain.gateway.ReadStyleStringKey
@@ -16,6 +16,7 @@ import io.legado.app.model.ReadSessionState
 import io.legado.app.utils.postEvent
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -54,6 +55,7 @@ class ReadConfigUpdateDelegate(
 
     fun handle(update: ConfigUpdate) {
         val styleMutation = update.toReadStyleMutation()
+        val deferEffectsUntilStyleSelectionApplied = update is ConfigUpdate.StyleSelect
         styleMutation?.let(readBookStyleConfigRepository::updateCurrentStyle)
         when (update) {
             // --- Text style ---
@@ -113,6 +115,11 @@ class ReadConfigUpdateDelegate(
             is ConfigUpdate.StyleSelect -> {
                 scope.launch {
                     readSettingsRepository.setStyleSelect(ReadSessionState.isComic, update.index)
+                    // The selected style supplies ReadBookConfig's active text color.
+                    // Publish reload only after this write, so source-side image JS
+                    // observes the newly selected reading theme.
+                    host.refreshConfigSnapshots()
+                    host.emitEffect(ReadBookEffect.UpdateReaderConfig(update.actions))
                 }
             }
             is ConfigUpdate.ShareLayout -> {
@@ -350,6 +357,15 @@ class ReadConfigUpdateDelegate(
                 }
                 host.updateMenuConfig {
                     it.copy(readMenuTopBarLiquidGlassButtons = update.value)
+                }
+            }
+
+            is ConfigUpdate.MenuTopBarMergeButtons -> {
+                scope.launch {
+                    readSettingsRepository.setReadMenuTopBarMergeButtons(update.value)
+                }
+                host.updateMenuConfig {
+                    it.copy(readMenuTopBarMergeButtons = update.value)
                 }
             }
 
@@ -623,6 +639,21 @@ class ReadConfigUpdateDelegate(
                     readSettingsRepository.setKeyPageOnLongPress(update.value)
                 }
             }
+            is ConfigUpdate.SwipeToAddBookmark -> {
+                scope.launch {
+                    readSettingsRepository.update { it.copy(swipeToAddBookmark = update.value) }
+                }
+            }
+            is ConfigUpdate.BookmarkBadgeSize -> {
+                scope.launch {
+                    readSettingsRepository.update { it.copy(bookmarkBadgeSize = update.value) }
+                    // 等写入落地再发 UpdateStyle，否则 upBookmarkBadge 读到旧尺寸
+                    readSettingsRepository.preferences.first { it.bookmarkBadgeSize == update.value }
+                    host.emitEffect(
+                        ReadBookEffect.UpdateReaderConfig(setOf(ConfigUpdateAction.UpdateStyle))
+                    )
+                }
+            }
             is ConfigUpdate.SliderVibrator -> {
                 scope.launch {
                     readSettingsRepository.setSliderVibrator(update.value)
@@ -631,6 +662,11 @@ class ReadConfigUpdateDelegate(
             is ConfigUpdate.UseNewTocSheet -> {
                 scope.launch {
                     readSettingsRepository.setUseNewTocSheet(update.value)
+                }
+            }
+            is ConfigUpdate.MaxLengthWithNoToc -> {
+                scope.launch {
+                    readSettingsRepository.setMaxLengthWithNoToc(update.value)
                 }
             }
             is ConfigUpdate.SelectVibrator -> {
@@ -649,6 +685,16 @@ class ReadConfigUpdateDelegate(
                 }
                 scope.launch {
                     readSettingsRepository.setAutoSuggestDayNight(update.value)
+                }
+            }
+            is ConfigUpdate.ReadingAnchorEnabled -> {
+                scope.launch {
+                    readSettingsRepository.setReadingAnchorEnabled(update.value)
+                }
+            }
+            is ConfigUpdate.ReadAloudDetachReminderEnabled -> {
+                scope.launch {
+                    readSettingsRepository.setReadAloudDetachReminderEnabled(update.value)
                 }
             }
             is ConfigUpdate.SelectText -> {
@@ -713,11 +759,11 @@ class ReadConfigUpdateDelegate(
         // 走了 gateway 的更新由 collectReadStyle 重建快照；只写 DataStore 的更新
         // 不经 gateway，需在此手工重建——且必须两份一起，
         // 否则像 ChineseConverterType 这种本就在 sheetConfig 里的项会一直显示旧值。
-        if (styleMutation == null) {
+        if (styleMutation == null && !deferEffectsUntilStyleSelectionApplied) {
             host.refreshConfigSnapshots()
         }
-        if (update.actions.isNotEmpty()) {
-            host.emitEffect(ReadBookEffect.UpdateReadViewConfig(update.actions))
+        if (update.actions.isNotEmpty() && !deferEffectsUntilStyleSelectionApplied) {
+            host.emitEffect(ReadBookEffect.UpdateReaderConfig(update.actions))
         }
     }
 

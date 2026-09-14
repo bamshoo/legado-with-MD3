@@ -262,6 +262,15 @@ fun ReadAloudContent(
             },
         )
 
+        TinySwitchSettingItem(
+            title = stringResource(R.string.finish_current_chapter_after_timer),
+            description = stringResource(R.string.finish_current_chapter_after_timer_summary),
+            checked = state.readAloudFinishCurrentChapterAfterTimer,
+            onCheckedChange = {
+                onIntent(ReadBookIntent.SetFinishCurrentChapterAfterTimer(it))
+            },
+        )
+
         Spacer(Modifier.height(8.dp))
 
         Row(
@@ -314,6 +323,7 @@ fun ReadAloudContent(
 
         TinySliderSettingItem(
             title = stringResource(R.string.read_aloud_speed),
+            description = stringResource(R.string.read_aloud_speed_summary),
             value = ttsSpeechRate.toFloat(),
             valueRange = 0f..80f,
             steps = 79,

@@ -7,28 +7,30 @@ import io.legado.app.constant.ReadMenuBlurMode
 import io.legado.app.constant.ReadMenuBlurStyle
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.data.entities.BookMarking
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.Bookmark
 import io.legado.app.data.entities.HighlightRule
 import io.legado.app.data.entities.ReplaceRule
 import io.legado.app.data.repository.ReadAloudSettingsRepository
+import io.legado.app.domain.model.AiReasoningLevel
+import io.legado.app.domain.model.TextProcessStyle
 import io.legado.app.domain.model.readaloud.SpeechRoleType
 import io.legado.app.domain.model.settings.ReadStyleItem
+import io.legado.app.domain.usecase.BookmarkTargetVerdict
 import io.legado.app.model.translation.TranslationChapterStatus
-import io.legado.app.ui.book.read.page.entities.TextChapter
-import io.legado.app.ui.book.read.page.entities.TextPos
 import io.legado.app.ui.book.read.sheet.ReaderBookSheetTab
 import io.legado.app.ui.book.searchContent.SearchResult
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 @Stable
 data class ReminderUiState(
-    val id: String = UUID.randomUUID().toString(),
+    val id: String = Uuid.random().toString(),
     val message: String,
     val actionText: String? = null,
     val actionIntent: ReadBookIntent? = null,
@@ -192,6 +194,14 @@ data class ReadSheetConfigUiState(
     val configNames: ImmutableList<String> = persistentListOf(),
 )
 
+/** 书签/笔记跳转前校验未通过的目标，弹「仍跳转」确认框。 */
+@Stable
+data class PendingBookmarkTarget(
+    val chapterIndex: Int,
+    val chapterPos: Int,
+    val verdict: BookmarkTargetVerdict,
+)
+
 @Stable
 data class ReadBookUiState(
     val book: Book? = null,
@@ -216,6 +226,10 @@ data class ReadBookUiState(
     // Read aloud / auto page
     val isReadAloudRunning: Boolean = false,
     val isReadAloudPaused: Boolean = false,
+    /** 朗读位置是否跟随当前显示页；手动翻页/跳章后为 false（显示"回到朗读位置"悬浮条）。 */
+    val readAloudFollow: Boolean = true,
+    /** 朗读位置脱离当前页时的悬浮提示开关；关闭时手动翻页朗读跟随新页面。 */
+    val readAloudDetachReminderEnabled: Boolean = false,
     val readAloudEngineName: String = "",
     val readAloudCharacterName: String = "",
     val readAloudRoleType: SpeechRoleType = SpeechRoleType.Narrator,
@@ -225,6 +239,7 @@ data class ReadBookUiState(
     // Seek bar
     val seekProgress: Int = 0,
     val seekMax: Int = 0,
+    val readingAnchorAvailable: Boolean = false,
     // Replace rules
     val replaceRuleEnabled: Boolean = false,
     val effectiveReplaceCount: Int = 0,
@@ -235,8 +250,6 @@ data class ReadBookUiState(
     // Translation
     val translationMode: Boolean = false,
     val translationStatus: TranslationChapterStatus = TranslationChapterStatus.Idle,
-    // Chapter info
-    val curTextChapter: TextChapter? = null,
     // Time / battery (from EventBus)
     val time: String = "",
     val battery: Int = 0,
@@ -244,6 +257,8 @@ data class ReadBookUiState(
     // Active sheet / dialog
     val activeSheet: ReadBookSheet? = null,
     val activeDialog: ReadBookDialog? = null,
+    /** 书签/笔记跳转前校验不通过时的待确认目标（弹确认框）。 */
+    val pendingBookmarkTarget: PendingBookmarkTarget? = null,
     // Menu state (for overflow menu)
     val isLocalTxt: Boolean = false,
     val isEpub: Boolean = false,
@@ -269,10 +284,12 @@ data class ReadBookUiState(
     val readAloudMediaButtonPerNext: Boolean = false,
     val readAloudByPage: Boolean = false,
     val readAloudSystemMediaCompat: Boolean = true,
+    val readAloudAndroidMediaControl: Boolean = false,
     val readAloudStreamAudio: Boolean = false,
     val readAloudTtsFollowSys: Boolean = false,
     val readAloudTtsSpeechRate: Int = 10,
     val readAloudTtsTimer: Int = 0,
+    val readAloudFinishCurrentChapterAfterTimer: Boolean = false,
     val speechAnalysisMode: String = "rule",
     val useMultiSpeaker: Boolean = true,
     val defaultReadAloudInterface: String = ReadAloudSettingsRepository.DEFAULT_INTERFACE_CLASSIC,
@@ -346,7 +363,7 @@ data class ReadMenuConfig(
     val readMenuBorderColorNight: Int = 0,
     val readMenuTextColor: Int = 0,
     val readMenuTextColorNight: Int = 0,
-    val readMenuBlurAlpha: Int = 100,
+    val readMenuBlurAlpha: Int = 85,
     val readMenuBlurColor: Int = 0,
     val readMenuBlurColorNight: Int = 0,
     val readMenuPaletteStyle: String = "",
@@ -355,6 +372,7 @@ data class ReadMenuConfig(
     val readMenuTopBarBlurMode: Int = ReadMenuBlurMode.None,
     val readMenuBottomBarBlurMode: Int = ReadMenuBlurMode.None,
     val readMenuTopBarLiquidGlassButtons: Boolean = false,
+    val readMenuTopBarMergeButtons: Boolean = false,
     val readMenuTopBarTitleCapsule: Boolean = false,
     val readMenuBottomBarLiquidGlassButtons: Boolean = false,
     val readMenuFloatingIconLiquidGlass: Boolean = false,
@@ -404,17 +422,26 @@ internal val ReadBookButtonIds = listOf(
 )
 
 internal val MoreActionIds = listOf(
-    "change_source", "refresh", "download", "edit_content", "add_bookmark",
+    "source_custom_button", "change_source", "refresh", "download", "edit_content", "add_bookmark",
     "text_processing", "reverse_content", "re_segment",
     "del_ruby", "del_h", "toc_rule", "charset", "image_style", "page_anim",
     "simulated_reading", "get_progress", "cover_progress", "highlight_rule",
     "bottom_button_config", "log",
 )
 
+@Immutable
+data class ReadBookInitRequest(
+    val bookUrl: String? = null,
+    val inBookshelf: Boolean = true,
+    val chapterChanged: Boolean = false,
+    val chapterIndex: Int = -1,
+    val chapterPos: Int = -1,
+)
+
 sealed interface ReadBookIntent {
     // Initialization
-    data class InitData(val intent: android.content.Intent) : ReadBookIntent
-    data class InitReadBookConfig(val intent: android.content.Intent) : ReadBookIntent
+    data class InitData(val request: ReadBookInitRequest) : ReadBookIntent
+    data class InitReadBookConfig(val request: ReadBookInitRequest) : ReadBookIntent
     data class CheckSwitchDayNight(val lux: Float) : ReadBookIntent
     data object DismissReminder : ReadBookIntent
 
@@ -468,6 +495,7 @@ sealed interface ReadBookIntent {
     data object OpenChapterSummary : ReadBookIntent
     data object OpenAiCurrentChapterRewrite : ReadBookIntent
     data object RetryChapterSummary : ReadBookIntent
+    data class SetChapterSummaryReasoningLevel(val level: AiReasoningLevel) : ReadBookIntent
     data object LoadContentProcesses : ReadBookIntent
     data class ToggleContentProcess(val id: String, val enabled: Boolean) : ReadBookIntent
     data class RequestDeleteContentProcess(val item: ContentProcessItemUi) : ReadBookIntent
@@ -492,6 +520,9 @@ sealed interface ReadBookIntent {
 
     // Bookmark
     data object AddBookmark : ReadBookIntent
+
+    /** 下滑手势：本页无书签则直接存，有则取消。 */
+    data object ToggleBookmark : ReadBookIntent
     data class SaveBookmark(val bookmark: io.legado.app.data.entities.Bookmark) : ReadBookIntent
     data class DeleteBookmark(val bookmark: io.legado.app.data.entities.Bookmark) : ReadBookIntent
 
@@ -514,6 +545,9 @@ sealed interface ReadBookIntent {
     data object DismissSheet : ReadBookIntent
     data class SetActiveSheet(val sheet: ReadBookSheet?) : ReadBookIntent
     data class ShowDialog(val dialog: ReadBookDialog) : ReadBookIntent
+    data class ResolveReadRecordAlias(val merge: Boolean, val rememberChoice: Boolean = false) : ReadBookIntent
+    /** 清除所有持久化的未知作者决定，使冲突可以再次由用户确认。 */
+    data object ClearReadRecordAliasDecisions : ReadBookIntent
     data object DismissDialog : ReadBookIntent
 
     // Source actions
@@ -524,6 +558,7 @@ sealed interface ReadBookIntent {
     data object OpenSourceEdit : ReadBookIntent
     data class OpenSourceEditByUrl(val sourceUrl: String) : ReadBookIntent
     data object OpenBookInfo : ReadBookIntent
+    data object OpenBookInfoDirect : ReadBookIntent
     data object OpenChapterList : ReadBookIntent
     data object OpenChapterUrl : ReadBookIntent
     data class SourceCustomButton(val longClick: Boolean) : ReadBookIntent
@@ -585,6 +620,8 @@ sealed interface ReadBookIntent {
     data object OpenReadStyleExport : ReadBookIntent
     data class ReadStyleImageSelected(val uri: Uri) : ReadBookIntent
     data class ReadStyleImageSelectedForMode(val uri: Uri, val isNight: Boolean) : ReadBookIntent
+    data class BookmarkBadgeImageSelected(val uri: Uri) : ReadBookIntent
+    data object ClearBookmarkBadgeImage : ReadBookIntent
     data class ReadStyleConfigImportSelected(val uri: Uri) : ReadBookIntent
     data class ReadStyleConfigExportSelected(val uri: Uri) : ReadBookIntent
     data object SaveReadStyleConfig : ReadBookIntent
@@ -648,8 +685,24 @@ sealed interface ReadBookIntent {
 
     // Default font picker (needs Activity for AlertDialog)
     // Text action menu (moved from Activity)
-    data class TextActionAloud(val text: String, val selectStartPos: TextPos?) : ReadBookIntent
+    data class TextActionAloud(
+        val text: String,
+        val chapterPosition: Int? = null,
+    ) : ReadBookIntent
     data class TextActionBookmark(val bookmark: Bookmark) : ReadBookIntent
+    data class OpenMarking(val selection: Bookmark) : ReadBookIntent
+
+    /** 从正文处理 Sheet 点标记项进入编辑模式。 */
+    data class EditMarking(val id: String) : ReadBookIntent
+    data object DismissMarking : ReadBookIntent
+    data class SaveMarking(val style: TextProcessStyle, val note: String) : ReadBookIntent
+    data object DeleteMarking : ReadBookIntent
+
+    /** 书签/笔记跳转：先校验定位（源/标题），不通过则弹确认框。 */
+    data class NavigateToBookmark(val bookmark: Bookmark) : ReadBookIntent
+    data class NavigateToMarking(val marking: BookMarking) : ReadBookIntent
+    data object ConfirmBookmarkTargetJump : ReadBookIntent
+    data object CancelBookmarkTargetJump : ReadBookIntent
     data class TextActionReplace(val text: String) : ReadBookIntent
     data class TextActionSearchContent(val text: String) : ReadBookIntent
     data class TextActionDict(val text: String) : ReadBookIntent
@@ -660,6 +713,7 @@ sealed interface ReadBookIntent {
     ) : ReadBookIntent
 
     data object RetryAiTextClean : ReadBookIntent
+    data class SetAiTextCleanReasoningLevel(val level: AiReasoningLevel) : ReadBookIntent
     data object ConfirmAiTextClean : ReadBookIntent
     data class OpenAiTextRewrite(
         val text: String,
@@ -672,6 +726,7 @@ sealed interface ReadBookIntent {
     data class SelectAiRewriteHistory(val artifactId: String) : ReadBookIntent
     data object GenerateAiTextRewrite : ReadBookIntent
     data object RetryAiTextRewrite : ReadBookIntent
+    data class SetAiTextRewriteReasoningLevel(val level: AiReasoningLevel) : ReadBookIntent
     data object ConfirmAiTextRewrite : ReadBookIntent
     data object OpenAiRewritePresetConfig : ReadBookIntent
     data object CloseAiRewritePresetConfig : ReadBookIntent
@@ -719,6 +774,7 @@ sealed interface ReadBookIntent {
     data class SetReadAloudMediaButtonPerNext(val value: Boolean) : ReadBookIntent
     data class SetReadAloudByPage(val value: Boolean) : ReadBookIntent
     data class SetReadAloudSystemMediaCompat(val value: Boolean) : ReadBookIntent
+    data class SetReadAloudAndroidMediaControl(val value: Boolean) : ReadBookIntent
     data class SetReadAloudStreamAudio(val value: Boolean) : ReadBookIntent
     data object ReadAloudPrevParagraph : ReadBookIntent
     data object ReadAloudTogglePause : ReadBookIntent
@@ -726,7 +782,12 @@ sealed interface ReadBookIntent {
     data object ReadAloudNextParagraph : ReadBookIntent
     data object ReadAloudPrevChapter : ReadBookIntent
     data object ReadAloudNextChapter : ReadBookIntent
+    /** 页面脱离朗读位置后，跳回朗读所在位置并恢复跟随。 */
+    data object BackToSpeakingPosition : ReadBookIntent
+    /** 页面脱离朗读位置后，从当前显示页重新开始朗读。 */
+    data object ReadAloudFromHere : ReadBookIntent
     data class SetReadAloudTtsTimer(val value: Int) : ReadBookIntent
+    data class SetFinishCurrentChapterAfterTimer(val value: Boolean) : ReadBookIntent
     data class SetReadAloudTtsFollowSys(val value: Boolean) : ReadBookIntent
     data class SetReadAloudTtsSpeechRate(val value: Int) : ReadBookIntent
     data class SetSpeechAnalysisMode(val value: String) : ReadBookIntent
@@ -775,8 +836,8 @@ sealed interface ReadBookEffect {
     // Navigation / lifecycle
     data object Finish : ReadBookEffect
 
-    // ReadView operations (require Activity/View reference)
-    data class UpdateReadViewConfig(val actions: Set<ConfigUpdateAction>) : ReadBookEffect
+    // Reader renderer operations handled by the route/controller boundary.
+    data class UpdateReaderConfig(val actions: Set<ConfigUpdateAction>) : ReadBookEffect
     data class UpContent(
         val relativePosition: Int,
         val resetPageOffset: Boolean,
@@ -794,6 +855,9 @@ sealed interface ReadBookEffect {
 
     // Menu / UI actions
     data object AddBookmark : ReadBookEffect
+
+    /** 书签集合变化后刷新三页的右上角书签角标。 */
+    data object UpBookmarkBadge : ReadBookEffect
     data object CancelSelect : ReadBookEffect
     data object UpSystemUiVisibility : ReadBookEffect
     data class SetBrightness(val value: Int) : ReadBookEffect
@@ -810,16 +874,7 @@ sealed interface ReadBookEffect {
         val bookUrl: String,
         val autoFocus: Boolean = true,
     ) : ReadBookEffect
-    data class NavigateToSearchResult(
-        val result: SearchResult,
-        val chapterIndex: Int,
-        val pageIndex: Int,
-        val lineIndex: Int,
-        val startCharIndex: Int,
-        val endRelativePage: Int,
-        val endLineIndex: Int,
-        val endCharIndex: Int,
-    ) : ReadBookEffect
+    data class NavigateToSearchResult(val result: SearchResult) : ReadBookEffect
     data object ExitSearch : ReadBookEffect
 
     // Source actions
@@ -853,7 +908,7 @@ sealed interface ReadBookEffect {
     data class SyncBookProgress(val book: Book) : ReadBookEffect
 
     // Text action menu (needs Activity for View operations)
-    data class TextActionAloudSelect(val selectStartPos: TextPos) : ReadBookEffect
+    data class TextActionAloudPosition(val chapterPosition: Int) : ReadBookEffect
     data class TextActionSpeak(val text: String) : ReadBookEffect
     data class TextActionReplace(val text: String, val bookName: String?, val bookSourceUrl: String?) : ReadBookEffect
 
@@ -890,6 +945,8 @@ sealed interface ReadBookEffect {
 
     // Page anim changed — Activity calls readView.upPageAnim() + ReadBook.loadContent(false)
     data object PageAnimChanged : ReadBookEffect
+    data class InvalidateReaderImage(val source: String) : ReadBookEffect
+    data class InvalidateReaderImages(val sources: Set<String>) : ReadBookEffect
 
     // Download chapters — Activity calls CacheBook.start()
     data class DownloadChapters(val start: Int, val end: Int) : ReadBookEffect
@@ -934,6 +991,7 @@ sealed interface ReadBookSheet {
     data object FontSelect : ReadBookSheet
     data object TitleFontSelect : ReadBookSheet
     data object HighlightRuleConfig : ReadBookSheet
+    data object Marking : ReadBookSheet
     data object MoreConfig : ReadBookSheet
     data object BgTextConfig : ReadBookSheet
     data object ReadAloudConfig : ReadBookSheet
@@ -959,6 +1017,11 @@ sealed interface ReadBookSheet {
 
 @Immutable
 sealed interface ReadBookDialog {
+    data class ReadRecordAliasConflict(
+        val bookName: String,
+        val author: String,
+        val readTime: Long,
+    ) : ReadBookDialog
     data class ConfirmRestoreProgress(val progress: BookProgress) : ReadBookDialog
     data class SureSyncProgress(val progress: BookProgress) : ReadBookDialog
     data object RestoreLastBookProgress : ReadBookDialog
@@ -978,6 +1041,12 @@ sealed interface ConfigUpdateAction {
     data object UpdateStyle : ConfigUpdateAction
     data object UpdateBackgroundAlpha : ConfigUpdateAction
     data object UpdatePageSlopSquare : ConfigUpdateAction
+
+    /**
+     * 仅样式方案/预设切换使用：重拉当前窗口的书源图片，随后重载正文。
+     * 单项颜色修改对齐旧 View，不带本动作——旧 View 只有事件 5（重跑书源规则），没有「删缓存重下」。
+     */
+    data object RefreshInlineImages : ConfigUpdateAction
     data object ReloadContent : ConfigUpdateAction
     data object RelayoutContent : ConfigUpdateAction
     data object UpdateContent : ConfigUpdateAction
@@ -998,7 +1067,20 @@ private val HEADER_FOOTER_TIP_ACTIONS = setOf(
 
 /**
  * Typed config mutations replace direct writes to the legacy ReadBookConfig facade.
- * Each variant carries [actions] that describe which UI updates are needed.
+ *
+ * `actions` 复刻旧 View 的 `EventBus.UP_CONFIG` 事件码（`4c088448c^` 的
+ * `ReadBookActivity.observeLiveBus()` 翻译表）：0=UpdateSystemUi、1=UpdateBackground、
+ * 2=UpdateStyle、3=UpdateBackgroundAlpha、4=UpdatePageSlopSquare、5=ReloadContent、
+ * 6=UpdateContent、8=UpdateChapterStyle、9=InvalidateTextPage、10=UpdateLayout、
+ * 11=SubmitRenderTask。
+ *
+ * 除上述一一对应的动作外，只允许追加 Compose 渲染器必需项：
+ * - `RebuildWholeBookPageIndex`：整书页码估算（旧 View 没有这套机制）；
+ * - `UpdateWholeBookPageDemand`：页眉页脚 `{FullPageIndex}` 一类占位符的求值需求；
+ * - `RefreshInlineImages`：仅样式方案/预设切换使用；
+ * - `UpdateSystemUi`：样式方案切换后刷新状态栏图标（Compose 不重建 Activity）。
+ *
+ * 新增或修改成员前，先到旧 View 对应弹窗里查它发的事件码，不要凭感觉填。
  */
 @Immutable
 sealed interface ConfigUpdate {
@@ -1026,11 +1108,25 @@ sealed interface ConfigUpdate {
     data class TextBold(val value: Int) : ConfigUpdate {
         override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.InvalidateTextPage, ConfigUpdateAction.UpdateContent)
     }
+
+    // 正文/强调色对应旧 View 的 [2, 6, 9, 11]（upStyle + upContent + invalidateTextPage +
+    // submitRenderTask）。旧 View 对这两项**不发事件 5**（loadContent），即不重新加载/解析正文，
+    // 只重绘已排好的页面；重绘由 invalidateTextPage/upContent 触发，故此处不带 ReloadContent。
     data class TextColor(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.InvalidateTextPage)
+        override val actions = setOf(
+            ConfigUpdateAction.UpdateStyle,
+            ConfigUpdateAction.UpdateContent,
+            ConfigUpdateAction.InvalidateTextPage,
+            ConfigUpdateAction.SubmitRenderTask,
+        )
     }
     data class TextAccentColor(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.InvalidateTextPage)
+        override val actions = setOf(
+            ConfigUpdateAction.UpdateStyle,
+            ConfigUpdateAction.UpdateContent,
+            ConfigUpdateAction.InvalidateTextPage,
+            ConfigUpdateAction.SubmitRenderTask,
+        )
     }
 
     // --- Title style ---
@@ -1061,23 +1157,45 @@ sealed interface ConfigUpdate {
     data class TitleBottomSpacing(val value: Int) : ConfigUpdate {
         override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)
     }
+
+    // 标题色对应旧 View 的 [8, 5]（ChapterProvider.upStyle + loadContent(false)）。这里的
+    // ReloadContent 就是旧事件 5：会重新加载正文并重排（章节正文缓存命中时是重新解析缓存内容，
+    // 缓存缺失时才重跑书源规则），与正文色只重绘的语义不同。
     data class TitleColor(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.InvalidateTextPage)
+        override val actions = setOf(
+            ConfigUpdateAction.UpdateChapterStyle,
+            ConfigUpdateAction.ReloadContent,
+        )
     }
     data class TitleColorNight(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.InvalidateTextPage)
+        override val actions = setOf(
+            ConfigUpdateAction.UpdateChapterStyle,
+            ConfigUpdateAction.ReloadContent,
+        )
     }
     data class TitleFont(val path: String) : ConfigUpdate {
         override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)
     }
+
+    // 旧 View 标题分段三项只发 [5]（不重建 ChapterProvider 样式快照，因为分段不改变字形/画笔）。
+    // Compose 另需 RebuildWholeBookPageIndex：分段会改变整书页码估算。
     data class TitleSegType(val value: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = setOf(
+            ConfigUpdateAction.RebuildWholeBookPageIndex,
+            ConfigUpdateAction.ReloadContent,
+        )
     }
     data class TitleSegDistance(val value: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = setOf(
+            ConfigUpdateAction.RebuildWholeBookPageIndex,
+            ConfigUpdateAction.ReloadContent,
+        )
     }
     data class TitleSegFlag(val value: String) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = setOf(
+            ConfigUpdateAction.RebuildWholeBookPageIndex,
+            ConfigUpdateAction.ReloadContent,
+        )
     }
 
     // --- Header / footer tips ---
@@ -1155,52 +1273,61 @@ sealed interface ConfigUpdate {
     }
 
     // --- Layout / style ---
+    // 旧 View 切样式方案 [1, 2, 5]；Compose 另需 RefreshInlineImages（重拉书源图片）与
+    // RebuildWholeBookPageIndex（整书页码）以及 UpdateSystemUi（状态栏图标随样式里的
+    // darkStatusIcon 变化，Compose 不重建 Activity）。
     data class StyleSelect(val index: Int) : ConfigUpdate {
         override val actions = setOf(
             ConfigUpdateAction.UpdateBackground,
             ConfigUpdateAction.UpdateStyle,
+            ConfigUpdateAction.RefreshInlineImages,
             ConfigUpdateAction.RebuildWholeBookPageIndex,
             ConfigUpdateAction.ReloadContent,
             ConfigUpdateAction.UpdateSystemUi,
-            ConfigUpdateAction.UpdatePageAnim
         )
     }
+
+    // 旧 View shareLayout = [1, 2, 5]。
     data class ShareLayout(val value: Boolean) : ConfigUpdate {
         override val actions = setOf(
             ConfigUpdateAction.UpdateBackground,
             ConfigUpdateAction.UpdateStyle,
             ConfigUpdateAction.RebuildWholeBookPageIndex,
             ConfigUpdateAction.ReloadContent,
-            ConfigUpdateAction.UpdatePageAnim
         )
     }
+
+    // 旧 View 换翻页动画：upPageAnim() + loadContent(false)（滚动/翻页模式的页高不同，故 Compose
+    // 另需重建整书页码索引）。
     data class PageAnim(val value: Int) : ConfigUpdate {
         override val actions = setOf(
-            ConfigUpdateAction.UpdateBackground,
             ConfigUpdateAction.UpdatePageAnim,
             ConfigUpdateAction.RebuildWholeBookPageIndex,
-            ConfigUpdateAction.ReloadContent
+            ConfigUpdateAction.ReloadContent,
         )
     }
 
     // --- Menu colors ---
+    // 菜单外观是 Compose 时代新增的项（旧 View 无对应事件码）。它们只被阅读菜单读取，菜单由
+    // menuConfig 状态反应式重组，因此不驱动正文渲染副作用。唯一例外是 MenuBgColor：状态栏图标
+    // 在菜单显示时按 resolvedMenuBgColor 取反色（ReadBookController:1303），故需 UpdateSystemUi。
     data class MenuBgColor(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.UpdateSystemUi)
+        override val actions = setOf(ConfigUpdateAction.UpdateSystemUi)
     }
     data class MenuAccentColor(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = emptySet<ConfigUpdateAction>()
     }
     data class MenuContainerColor(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = emptySet<ConfigUpdateAction>()
     }
     data class MenuBgColorNight(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.UpdateSystemUi)
+        override val actions = setOf(ConfigUpdateAction.UpdateSystemUi)
     }
     data class MenuAccentColorNight(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = emptySet<ConfigUpdateAction>()
     }
     data class MenuContainerColorNight(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = emptySet<ConfigUpdateAction>()
     }
     data class MenuTextColor(val color: Int) : ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
@@ -1216,14 +1343,15 @@ sealed interface ConfigUpdate {
     }
 
     // --- Menu bar border ---
+    // 只画在菜单栏上（ReadBookMenuBar/ReadBookMenuBarTitle 直接读 menuConfig），无正文副作用。
     data class BorderWidth(val value: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = emptySet<ConfigUpdateAction>()
     }
     data class BorderColor(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = emptySet<ConfigUpdateAction>()
     }
     data class BorderColorNight(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent)
+        override val actions = emptySet<ConfigUpdateAction>()
     }
 
     // --- Shadow ---
@@ -1240,7 +1368,13 @@ sealed interface ConfigUpdate {
         override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)
     }
     data class ShadowColor(val color: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateStyle, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.InvalidateTextPage)
+        // 旧 View S_COLOR = [2, 6, 9, 11]，与正文色同族（只重绘，不重载正文）。
+        override val actions = setOf(
+            ConfigUpdateAction.UpdateStyle,
+            ConfigUpdateAction.UpdateContent,
+            ConfigUpdateAction.InvalidateTextPage,
+            ConfigUpdateAction.SubmitRenderTask,
+        )
     }
 
     // --- Underline ---
@@ -1263,12 +1397,21 @@ sealed interface ConfigUpdate {
         override val actions = setOf(ConfigUpdateAction.UpdateContent, ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.UpdateLayout)
     }
     data class DottedRatio(val value: Float) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateContent, ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.UpdateLayout)
+        // 旧 View dottedRatio = [6, 9, 11]（只重绘下划线）。
+        override val actions = setOf(
+            ConfigUpdateAction.UpdateContent,
+            ConfigUpdateAction.InvalidateTextPage,
+            ConfigUpdateAction.SubmitRenderTask,
+        )
     }
     data class UnderlineColor(val color: Int) : ConfigUpdate {
-        // 对齐兄弟项 Underline/DottedLine：改颜色要重绘已排好的 TextPage，
-        // 仅 UpdateStyle（readView.upStyle()）不会重画下划线。
-        override val actions = setOf(ConfigUpdateAction.UpdateContent, ConfigUpdateAction.InvalidateTextPage, ConfigUpdateAction.SubmitRenderTask)
+        // 旧 View U_COLOR 连发 [2] 与 [6, 9, 11]：改颜色既要重建画笔又要重绘已排好的 TextPage。
+        override val actions = setOf(
+            ConfigUpdateAction.UpdateStyle,
+            ConfigUpdateAction.UpdateContent,
+            ConfigUpdateAction.InvalidateTextPage,
+            ConfigUpdateAction.SubmitRenderTask,
+        )
     }
 
     // --- Body padding ---
@@ -1320,23 +1463,24 @@ sealed interface ConfigUpdate {
     }
 
     // --- Background / display ---
+    // 旧 View 换背景色/背景图只发 [1]（readView.upBg()，内部同时刷新 alpha）。
     data class BgStr(val value: String) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateBackgroundAlpha, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.UpdateSystemUi)
+        override val actions = setOf(ConfigUpdateAction.UpdateBackground)
     }
     data class BgStrNight(val value: String) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateBackgroundAlpha, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.UpdateSystemUi)
+        override val actions = setOf(ConfigUpdateAction.UpdateBackground)
     }
     data class BgStrEInk(val value: String) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateBackgroundAlpha, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.UpdateSystemUi)
+        override val actions = setOf(ConfigUpdateAction.UpdateBackground)
     }
     data class BgType(val value: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateBackgroundAlpha, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.UpdateSystemUi)
+        override val actions = setOf(ConfigUpdateAction.UpdateBackground)
     }
     data class BgTypeNight(val value: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateBackgroundAlpha, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.UpdateSystemUi)
+        override val actions = setOf(ConfigUpdateAction.UpdateBackground)
     }
     data class BgTypeEInk(val value: Int) : ConfigUpdate {
-        override val actions = setOf(ConfigUpdateAction.UpdateBackground, ConfigUpdateAction.UpdateBackgroundAlpha, ConfigUpdateAction.ReloadContent, ConfigUpdateAction.UpdateSystemUi)
+        override val actions = setOf(ConfigUpdateAction.UpdateBackground)
     }
     data class BgAlpha(val value: Int) : ConfigUpdate {
         override val actions = setOf(ConfigUpdateAction.UpdateBackgroundAlpha)
@@ -1379,6 +1523,10 @@ sealed interface ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
     }
     data class MenuTopBarLiquidGlassButtons(val value: Boolean) : ConfigUpdate {
+        override val actions = emptySet<ConfigUpdateAction>()
+    }
+
+    data class MenuTopBarMergeButtons(val value: Boolean) : ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
     }
     data class MenuTopBarTitleCapsule(val value: Boolean) : ConfigUpdate {
@@ -1505,10 +1653,20 @@ sealed interface ConfigUpdate {
     data class KeyPageOnLongPress(val value: Boolean) : ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
     }
+    data class SwipeToAddBookmark(val value: Boolean) : ConfigUpdate {
+        override val actions = emptySet<ConfigUpdateAction>()
+    }
+
+    data class BookmarkBadgeSize(val value: Int) : ConfigUpdate {
+        override val actions = emptySet<ConfigUpdateAction>()
+    }
     data class SliderVibrator(val value: Boolean) : ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
     }
     data class UseNewTocSheet(val value: Boolean) : ConfigUpdate {
+        override val actions = emptySet<ConfigUpdateAction>()
+    }
+    data class MaxLengthWithNoToc(val value: Int) : ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
     }
     data class SelectVibrator(val value: Boolean) : ConfigUpdate {
@@ -1520,6 +1678,12 @@ sealed interface ConfigUpdate {
     data class AutoSuggestDayNight(val value: Boolean) : ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
     }
+    data class ReadingAnchorEnabled(val value: Boolean) : ConfigUpdate {
+        override val actions = emptySet<ConfigUpdateAction>()
+    }
+    data class ReadAloudDetachReminderEnabled(val value: Boolean) : ConfigUpdate {
+        override val actions = emptySet<ConfigUpdateAction>()
+    }
     data class SelectText(val value: Boolean) : ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
     }
@@ -1527,10 +1691,10 @@ sealed interface ConfigUpdate {
         override val actions = emptySet<ConfigUpdateAction>()
     }
     data class OptimizeRender(val value: Boolean) : ConfigUpdate {
+        // 旧 View optimizeRender：ChapterProvider.upStyle() + loadContent(false)。
         override val actions = setOf(
             ConfigUpdateAction.UpdateChapterStyle,
             ConfigUpdateAction.ReloadContent,
-            ConfigUpdateAction.SubmitRenderTask,
         )
     }
     data class ClickImgWay(val value: String) : ConfigUpdate {

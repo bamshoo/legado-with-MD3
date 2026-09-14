@@ -1,5 +1,6 @@
 package io.legado.app.ui.book.read
 
+import io.legado.app.ui.book.read.ConfigUpdateActionsInvariantTest.Companion.NO_RENDER_EFFECT
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.reflect.KClass
@@ -87,6 +88,14 @@ class ConfigUpdateActionsInvariantTest {
             // 阅读菜单外观
             "MenuTextColor",
             "MenuTextColorNight",
+            // 菜单强调色/容器色与菜单栏边框只被菜单读取（menuConfig 状态驱动），无正文副作用
+            "MenuAccentColor",
+            "MenuAccentColorNight",
+            "MenuContainerColor",
+            "MenuContainerColorNight",
+            "BorderWidth",
+            "BorderColor",
+            "BorderColorNight",
             "MenuIconShowText",
             "MenuIconStyle",
             "MenuIconItemsPerRow",
@@ -103,6 +112,7 @@ class ConfigUpdateActionsInvariantTest {
             "MenuTopBarBlurMode",
             "MenuTopBarBlurSelection",
             "MenuTopBarLiquidGlassButtons",
+            "MenuTopBarMergeButtons",
             "MenuTopBarTitleCapsule",
             "MenuBottomBarBlurMode",
             "MenuBottomBarBlurStyle",
@@ -126,7 +136,10 @@ class ConfigUpdateActionsInvariantTest {
             "MouseWheelPage",
             "VolumeKeyPage",
             "VolumeKeyPageOnPlay",
+            "ReadAloudDetachReminderEnabled",
             "KeyPageOnLongPress",
+            "SwipeToAddBookmark",
+            "BookmarkBadgeSize",
             "SliderVibrator",
             "SelectVibrator",
             "ClickImgWay",
@@ -145,6 +158,10 @@ class ConfigUpdateActionsInvariantTest {
             "AutoReadSpeed",
             // 只决定点击目录时开新 Sheet 还是旧 Activity，取用时读设置，无渲染副作用
             "UseNewTocSheet",
+            // 只影响下次目录解析时的无规则章节切分长度，取用时读设置，无渲染副作用
+            "MaxLengthWithNoToc",
+            // 只写 DataStore 的 readingAnchorEnabled，锚点栏可见性由 readPreferences 反应式驱动
+            "ReadingAnchorEnabled",
         )
     }
 }

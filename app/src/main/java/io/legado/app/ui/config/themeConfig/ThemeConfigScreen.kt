@@ -251,6 +251,15 @@ fun ThemeConfigScreen(
                 }
 
                 SplicedColumnGroup {
+                    if (!isMiuixEngine) {
+                        SwitchSettingItem(
+                            title = stringResource(R.string.pure_black),
+                            checked = theme.isPureBlack,
+                            onCheckedChange = { value ->
+                                updateTheme { it.copy(isPureBlack = value) }
+                            }
+                        )
+                    }
                     ClickableSettingItem(
                         title = stringResource(R.string.font_setting),
                         onClick = { onIntent(ThemeConfigIntent.ShowSheet(ThemeConfigSheet.Font)) }
@@ -309,6 +318,19 @@ fun ThemeConfigScreen(
                         description = stringResource(R.string.theme_pack_s),
                         onClick = onNavigateToThemeManage
                     )
+                    ClickableSettingItem(
+                        title = stringResource(R.string.background_image),
+                        description = "日间/夜间背景图与背景虚化",
+                        onClick = {
+                            onIntent(
+                                ThemeConfigIntent.ShowSheet(
+                                    ThemeConfigSheet.BackgroundImage(
+                                        BackgroundImageTarget.App
+                                    )
+                                )
+                            )
+                        }
+                    )
                 }
 
                 SplicedColumnGroup(title = stringResource(R.string.main_activity)) {
@@ -338,53 +360,13 @@ fun ThemeConfigScreen(
                             )
                         }
                     )
-                    SwitchSettingItem(
-                        title = stringResource(R.string.show_bottom_nav),
-                        description = stringResource(R.string.be_swiped),
-                        checked = appShell.showBottomView,
-                        onCheckedChange = {
-                            onIntent(
-                                ThemeConfigIntent.SetShowBottomView(it)
-                            )
-                        }
+                    ClickableSettingItem(
+                        title = stringResource(R.string.top_bottom_bar_settings),
+                        description = stringResource(R.string.top_bottom_bar_settings_summary),
+                        onClick = {
+                            onIntent(ThemeConfigIntent.ShowSheet(ThemeConfigSheet.TopBottomBar))
+                        },
                     )
-                    SwitchSettingItem(
-                        title = stringResource(R.string.floating_bottom_bar),
-                        description = stringResource(R.string.floating_bottom_bar_summary),
-                        checked = appShell.useFloatingBottomBar,
-                        onCheckedChange = {
-                            onIntent(
-                                ThemeConfigIntent.SetUseFloatingBottomBar(it)
-                            )
-                        }
-                    )
-                    AnimatedVisibility(visible = appShell.useFloatingBottomBar) {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            SwitchSettingItem(
-                                title = stringResource(R.string.floating_bottom_bar_liquid_glass),
-                                description = stringResource(R.string.floating_bottom_bar_liquid_glass_summary),
-                                checked = appShell.useFloatingBottomBarLiquidGlass,
-                                onCheckedChange = {
-                                    onIntent(
-                                        ThemeConfigIntent.SetUseFloatingBottomBarLiquidGlass(it)
-                                    )
-                                }
-                            )
-                            SliderSettingItem(
-                                title = stringResource(R.string.theme_config_bottom_bar_lens_radius),
-                                description = stringResource(R.string.theme_config_bottom_bar_lens_radius_summary),
-                                value = theme.bottomBarLensRadius,
-                                defaultValue = 24f,
-                                valueRange = 0f..50f,
-                                onValueChange = { value ->
-                                    updateTheme { it.copy(bottomBarLensRadius = value) }
-                                }
-                            )
-                        }
-
-                    }
                     DropdownListSettingItem(
                         title = stringResource(R.string.tabletInterface),
                         selectedValue = appShell.tabletInterface,
@@ -503,23 +485,7 @@ fun ThemeConfigScreen(
                     }
                 }
 
-                SplicedColumnGroup(title = stringResource(R.string.compose_related)) {
-                    if (!isMiuixEngine) {
-                        SwitchSettingItem(
-                            title = stringResource(R.string.pure_black),
-                            checked = theme.isPureBlack,
-                            onCheckedChange = { value ->
-                                updateTheme { it.copy(isPureBlack = value) }
-                            }
-                        )
-                        SwitchSettingItem(
-                            title = stringResource(R.string.use_flexible_top_bar),
-                            checked = theme.useFlexibleTopAppBar,
-                            onCheckedChange = { value ->
-                                updateTheme { it.copy(useFlexibleTopAppBar = value) }
-                            }
-                        )
-                    }
+                SplicedColumnGroup(title = stringResource(R.string.blur_effects)) {
                     SwitchSettingItem(
                         title = stringResource(R.string.is_blur_enable),
                         checked = theme.enableBlur,
@@ -534,130 +500,8 @@ fun ThemeConfigScreen(
                             }
                         )
                     }
-                    if (theme.enableBlur) {
-                        SliderSettingItem(
-                            title = stringResource(R.string.theme_manage_top_bar_blur_radius),
-                            description = stringResource(R.string.theme_config_blur_radius_performance_summary),
-                            value = theme.topBarBlurRadius.toFloat(),
-                            defaultValue = 24f,
-                            valueRange = 0f..30f,
-                            onValueChange = { value ->
-                                updateTheme { it.copy(topBarBlurRadius = value.toInt()) }
-                            }
-                        )
-                        SliderSettingItem(
-                            title = stringResource(R.string.theme_manage_bottom_bar_blur_radius),
-                            description = stringResource(R.string.theme_config_blur_radius_performance_summary),
-                            value = theme.bottomBarBlurRadius.toFloat(),
-                            defaultValue = 8f,
-                            valueRange = 0f..10f,
-                            onValueChange = { value ->
-                                updateTheme { it.copy(bottomBarBlurRadius = value.toInt()) }
-                            }
-                        )
-                        SliderSettingItem(
-                            title = stringResource(R.string.theme_manage_top_bar_blur_opacity),
-                            value = theme.topBarBlurAlpha.toFloat(),
-                            defaultValue = 73f,
-                            valueRange = 0f..100f,
-                            onValueChange = { value ->
-                                updateTheme { it.copy(topBarBlurAlpha = value.toInt()) }
-                            }
-                        )
-                        SliderSettingItem(
-                            title = stringResource(R.string.theme_manage_bottom_bar_blur_opacity),
-                            value = theme.bottomBarBlurAlpha.toFloat(),
-                            defaultValue = 40f,
-                            valueRange = 0f..100f,
-                            onValueChange = { value ->
-                                updateTheme { it.copy(bottomBarBlurAlpha = value.toInt()) }
-                            }
-                        )
-                    }
-                    AnimatedVisibility(visible = !isMiuixEngine && !theme.enableBlur) {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            SliderSettingItem(
-                                title = stringResource(R.string.top_bar_opacity),
-                                description = stringResource(
-                                    R.string.top_bar_opacity_summary,
-                                    theme.topBarOpacity
-                                ),
-                                value = theme.topBarOpacity.toFloat(),
-                                defaultValue = 100f,
-                                valueRange = 0f..100f,
-                                onValueChange = { value ->
-                                    updateTheme { it.copy(topBarOpacity = value.toInt()) }
-                                }
-                            )
-                            SliderSettingItem(
-                                title = stringResource(R.string.bottom_bar_opacity),
-                                description = stringResource(
-                                    R.string.bottom_bar_opacity_summary,
-                                    theme.bottomBarOpacity
-                                ),
-                                value = theme.bottomBarOpacity.toFloat(),
-                                defaultValue = 100f,
-                                valueRange = 0f..100f,
-                                onValueChange = { value ->
-                                    updateTheme { it.copy(bottomBarOpacity = value.toInt()) }
-                                }
-                            )
-                        }
-                    }
                 }
 
-                SplicedColumnGroup(title = stringResource(R.string.background_image)) {
-                    val hasLightBg = !theme.backgroundImageLight.isNullOrBlank()
-                    ClickableSettingItem(
-                        title = stringResource(R.string.day),
-                        description = if (hasLightBg) stringResource(R.string.click_to_delete) else stringResource(
-                            R.string.select_image
-                        ),
-                        onClick = {
-                            onIntent(
-                                ThemeConfigIntent.ShowSheet(ThemeConfigSheet.Background(false))
-                            )
-                        }
-                    )
-
-                    if (hasLightBg) {
-                        SliderSettingItem(
-                            title = stringResource(R.string.background_image_blurring),
-                            value = theme.backgroundImageBlurring.toFloat(),
-                            defaultValue = 0f,
-                            valueRange = 0f..100f,
-                            onValueChange = { value ->
-                                updateTheme { it.copy(backgroundImageBlurring = value.toInt()) }
-                            }
-                        )
-                    }
-                    val hasDarkBg = !theme.backgroundImageDark.isNullOrBlank()
-                    ClickableSettingItem(
-                        title = stringResource(R.string.night),
-                        description = if (hasDarkBg) stringResource(R.string.click_to_delete) else stringResource(
-                            R.string.select_image
-                        ),
-                        onClick = {
-                            onIntent(
-                                ThemeConfigIntent.ShowSheet(ThemeConfigSheet.Background(true))
-                            )
-                        }
-                    )
-
-                    if (hasDarkBg) {
-                        SliderSettingItem(
-                            title = stringResource(R.string.background_image_blurring),
-                            value = theme.backgroundImageDarkBlurring.toFloat(),
-                            defaultValue = 0f,
-                            valueRange = 0f..100f,
-                            onValueChange = { value ->
-                                updateTheme { it.copy(backgroundImageDarkBlurring = value.toInt()) }
-                            }
-                        )
-                    }
-                }
             }
 
             // Container settings
@@ -672,66 +516,46 @@ fun ThemeConfigScreen(
                         }
                     )
                     AnimatedVisibility(visible = theme.enableContainerBackgroundImage) {
-                        Column {
-                            ContainerBackgroundSettingItem(
-                                title = "大容器日间背景图片",
-                                path = theme.largeContainerBackgroundImageLight,
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            ClickableSettingItem(
+                                title = "大容器背景图片",
+                                description = if (theme.largeContainerBackgroundImageLight.isNullOrBlank() &&
+                                    theme.largeContainerBackgroundImageDark.isNullOrBlank()
+                                ) {
+                                    stringResource(R.string.select_image)
+                                } else {
+                                    "已选择"
+                                },
                                 onClick = {
-                                    onIntent(ThemeConfigIntent.RequestContainerBackgroundImage(ContainerBackgroundTarget.LargeContainer, false))
-                                },
-                                onRemove = {
-                                    onIntent(ThemeConfigIntent.RemoveContainerBackground(ContainerBackgroundTarget.LargeContainer, false))
-                                },
-                            )
-                            ContainerBackgroundSettingItem(
-                                title = "大容器夜间背景图片",
-                                path = theme.largeContainerBackgroundImageDark,
-                                onClick = {
-                                    onIntent(ThemeConfigIntent.RequestContainerBackgroundImage(ContainerBackgroundTarget.LargeContainer, true))
-                                },
-                                onRemove = {
-                                    onIntent(ThemeConfigIntent.RemoveContainerBackground(ContainerBackgroundTarget.LargeContainer, true))
-                                },
-                            )
-                            SliderSettingItem(
-                                title = "大容器背景图透明度",
-                                description = "${theme.appColumnBackgroundOpacity}%",
-                                value = theme.appColumnBackgroundOpacity.toFloat(),
-                                defaultValue = 100f,
-                                valueRange = 0f..100f,
-                                onValueChange = { value ->
-                                    updateTheme { it.copy(appColumnBackgroundOpacity = value.toInt()) }
+                                    onIntent(
+                                        ThemeConfigIntent.ShowSheet(
+                                            ThemeConfigSheet.BackgroundImage(
+                                                BackgroundImageTarget.LargeContainer
+                                            )
+                                        )
+                                    )
                                 }
                             )
-                            SliderSettingItem(
-                                title = "项目背景图透明度",
-                                description = "${theme.glassCardBackgroundOpacity}%",
-                                value = theme.glassCardBackgroundOpacity.toFloat(),
-                                defaultValue = 100f,
-                                valueRange = 0f..100f,
-                                onValueChange = { value ->
-                                    updateTheme { it.copy(glassCardBackgroundOpacity = value.toInt()) }
+                            ClickableSettingItem(
+                                title = "项目背景图片",
+                                description = if (theme.itemBackgroundImageLight.isNullOrBlank() &&
+                                    theme.itemBackgroundImageDark.isNullOrBlank()
+                                ) {
+                                    stringResource(R.string.select_image)
+                                } else {
+                                    "已选择"
+                                },
+                                onClick = {
+                                    onIntent(
+                                        ThemeConfigIntent.ShowSheet(
+                                            ThemeConfigSheet.BackgroundImage(
+                                                BackgroundImageTarget.Item
+                                            )
+                                        )
+                                    )
                                 }
-                            )
-                            ContainerBackgroundSettingItem(
-                                title = "项目日间背景图片",
-                                path = theme.itemBackgroundImageLight,
-                                onClick = {
-                                    onIntent(ThemeConfigIntent.RequestContainerBackgroundImage(ContainerBackgroundTarget.Item, false))
-                                },
-                                onRemove = {
-                                    onIntent(ThemeConfigIntent.RemoveContainerBackground(ContainerBackgroundTarget.Item, false))
-                                },
-                            )
-                            ContainerBackgroundSettingItem(
-                                title = "项目夜间背景图片",
-                                path = theme.itemBackgroundImageDark,
-                                onClick = {
-                                    onIntent(ThemeConfigIntent.RequestContainerBackgroundImage(ContainerBackgroundTarget.Item, true))
-                                },
-                                onRemove = {
-                                    onIntent(ThemeConfigIntent.RemoveContainerBackground(ContainerBackgroundTarget.Item, true))
-                                },
                             )
                         }
                     }
@@ -932,14 +756,106 @@ fun ThemeConfigScreen(
     }
 
 
+    val backgroundImageSheet = state.activeSheet as? ThemeConfigSheet.BackgroundImage
+    val backgroundImageTarget = backgroundImageSheet?.target
+    fun requestImage(dark: Boolean) {
+        when (backgroundImageTarget) {
+            BackgroundImageTarget.App ->
+                onIntent(ThemeConfigIntent.RequestBackgroundImage(dark))
+
+            BackgroundImageTarget.LargeContainer ->
+                onIntent(
+                    ThemeConfigIntent.RequestContainerBackgroundImage(
+                        ContainerBackgroundTarget.LargeContainer,
+                        dark
+                    )
+                )
+
+            BackgroundImageTarget.Item ->
+                onIntent(
+                    ThemeConfigIntent.RequestContainerBackgroundImage(
+                        ContainerBackgroundTarget.Item,
+                        dark
+                    )
+                )
+
+            null -> Unit
+        }
+    }
+
+    fun removeImage(dark: Boolean) {
+        when (backgroundImageTarget) {
+            BackgroundImageTarget.App ->
+                onIntent(ThemeConfigIntent.RemoveBackground(dark))
+
+            BackgroundImageTarget.LargeContainer ->
+                onIntent(
+                    ThemeConfigIntent.RemoveContainerBackground(
+                        ContainerBackgroundTarget.LargeContainer,
+                        dark
+                    )
+                )
+
+            BackgroundImageTarget.Item ->
+                onIntent(
+                    ThemeConfigIntent.RemoveContainerBackground(
+                        ContainerBackgroundTarget.Item,
+                        dark
+                    )
+                )
+
+            null -> Unit
+        }
+    }
     BackgroundImageManageSheet(
-        isDarkTheme = (state.activeSheet as? ThemeConfigSheet.Background)?.dark,
-        currentPath = (state.activeSheet as? ThemeConfigSheet.Background)?.let {
-            if (it.dark) theme.backgroundImageDark else theme.backgroundImageLight
-        },
+        show = backgroundImageSheet != null,
         onDismissRequest = { onIntent(ThemeConfigIntent.DismissSheet) },
-        onSelectImage = { onIntent(ThemeConfigIntent.RequestBackgroundImage(it)) },
-        onRemoveImage = { onIntent(ThemeConfigIntent.RemoveBackground(it)) },
+        title = when (backgroundImageTarget) {
+            BackgroundImageTarget.App -> stringResource(R.string.background_image)
+            BackgroundImageTarget.LargeContainer -> "大容器背景图片"
+            BackgroundImageTarget.Item -> "项目背景图片"
+            null -> ""
+        },
+        lightPath = when (backgroundImageTarget) {
+            BackgroundImageTarget.App -> theme.backgroundImageLight
+            BackgroundImageTarget.LargeContainer -> theme.largeContainerBackgroundImageLight
+            BackgroundImageTarget.Item -> theme.itemBackgroundImageLight
+            null -> null
+        },
+        darkPath = when (backgroundImageTarget) {
+            BackgroundImageTarget.App -> theme.backgroundImageDark
+            BackgroundImageTarget.LargeContainer -> theme.largeContainerBackgroundImageDark
+            BackgroundImageTarget.Item -> theme.itemBackgroundImageDark
+            null -> null
+        },
+        extraOption = when (backgroundImageTarget) {
+            BackgroundImageTarget.App -> BackgroundImageExtraOption.Blur(
+                lightTitle = "日间背景图片虚化",
+                darkTitle = "夜间背景图片虚化",
+                lightValue = theme.backgroundImageBlurring,
+                darkValue = theme.backgroundImageDarkBlurring,
+                onLightChange = { value -> updateTheme { it.copy(backgroundImageBlurring = value) } },
+                onDarkChange = { value -> updateTheme { it.copy(backgroundImageDarkBlurring = value) } },
+            )
+
+            BackgroundImageTarget.LargeContainer -> BackgroundImageExtraOption.Opacity(
+                title = "大容器背景图透明度",
+                value = theme.appColumnBackgroundOpacity,
+                onValueChange = { value -> updateTheme { it.copy(appColumnBackgroundOpacity = value) } },
+            )
+
+            BackgroundImageTarget.Item -> BackgroundImageExtraOption.Opacity(
+                title = "项目背景图透明度",
+                value = theme.glassCardBackgroundOpacity,
+                onValueChange = { value -> updateTheme { it.copy(glassCardBackgroundOpacity = value) } },
+            )
+
+            null -> null
+        },
+        onSelectLight = { requestImage(false) },
+        onSelectDark = { requestImage(true) },
+        onRemoveLight = { removeImage(false) },
+        onRemoveDark = { removeImage(true) },
     )
 
     MainNavigationSettingsSheet(
@@ -956,6 +872,15 @@ fun ThemeConfigScreen(
         onSetLabelVisibilityMode = {
             onIntent(ThemeConfigIntent.SetLabelVisibilityMode(it))
         },
+    )
+
+    TopBottomBarSettingsSheet(
+        show = state.activeSheet == ThemeConfigSheet.TopBottomBar,
+        appShell = appShell,
+        theme = theme,
+        isMiuixEngine = ThemeResolver.isMiuixEngine(appShell.composeEngine),
+        onDismissRequest = { onIntent(ThemeConfigIntent.DismissSheet) },
+        onIntent = onIntent,
     )
 
 
@@ -1020,31 +945,6 @@ fun ThemeConfigScreen(
         emptyText = stringResource(R.string.theme_config_no_font_files),
     )
 
-}
-
-@Composable
-private fun ContainerBackgroundSettingItem(
-    title: String,
-    path: String?,
-    onClick: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    ClickableSettingItem(
-        title = title,
-        description = if (path.isNullOrBlank()) "选择图片" else "已选择",
-        onClick = onClick,
-        trailingContent = if (path.isNullOrBlank()) {
-            null
-        } else {
-            {
-                SmallPlainButton(
-                    onClick = onRemove,
-                    icon = Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.clear),
-                )
-            }
-        },
-    )
 }
 
 @Composable

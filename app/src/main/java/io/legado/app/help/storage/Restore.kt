@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteConstraintException
 import android.net.Uri
 import android.os.Environment
+import androidx.room.withTransaction
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import io.legado.app.BuildConfig
@@ -15,6 +16,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.Bookmark
+import io.legado.app.data.entities.BookMarking
 import io.legado.app.data.entities.DictRule
 import io.legado.app.data.entities.HighlightRule
 import io.legado.app.data.entities.HighlightTagRule
@@ -33,6 +35,8 @@ import io.legado.app.data.entities.TxtTocRule
 import io.legado.app.data.entities.readRecord.ReadRecord
 import io.legado.app.data.entities.readRecord.ReadRecordDetail
 import io.legado.app.data.entities.readRecord.ReadRecordSession
+import io.legado.app.data.entities.readRecord.ReadRecordIdentity
+import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.domain.gateway.AppLocaleGateway
 import io.legado.app.domain.gateway.ReadStyleGateway
 import io.legado.app.fanqie.FanqieGroup
@@ -49,7 +53,6 @@ import io.legado.app.help.config.SettingsWriter
 import io.legado.app.help.config.ThemeConfigStore
 import io.legado.app.model.BookCover
 import io.legado.app.model.localBook.LocalBook
-import io.legado.app.ui.config.otherConfig.OtherConfig
 import io.legado.app.utils.ACache
 import io.legado.app.utils.FileUtils
 import io.legado.app.utils.GSON
@@ -79,6 +82,9 @@ import java.io.FileInputStream
 object Restore : KoinComponent {
 
     private const val TAG = "Restore"
+    // 阅读器当前只使用本地记录分区。旧版备份可能保留设备 Android ID，
+    // 恢复时须归一化，否则同一本书会因 deviceId 不同而显示为两条记录。
+    private const val LOCAL_READ_RECORD_DEVICE_ID = ""
 
     suspend fun restore(context: Context, uri: Uri) {
         BackupRestoreLock.withLock {
@@ -144,10 +150,17 @@ object Restore : KoinComponent {
                 }
             }
         }
+        // 书签与划线/想法笔记（book_marks）视为一体，统一受既有 bookmark 忽略项控制
         if (BackupConfig.dbIsNotIgnored("bookmark")) {
             fileToListT<Bookmark>(path, "bookmark.json")?.let {
                 try {
                     appDb.bookmarkDao.insert(*it.toTypedArray())
+                } catch (_: SQLiteConstraintException) {
+                }
+            }
+            fileToListT<BookMarking>(path, "bookMarking.json")?.let {
+                try {
+                    appDb.bookMarkingDao.insert(*it.toTypedArray())
                 } catch (_: SQLiteConstraintException) {
                 }
             }
@@ -271,30 +284,21 @@ object Restore : KoinComponent {
             }
         }
         if (BackupConfig.dbIsNotIgnored("readRecord")) {
-            fileToListT<ReadRecord>(path, "readRecord.json")?.let {
-                it.forEach { readRecord ->
-                    try {
-                        restoreReadRecord(readRecord)
-                    } catch (_: SQLiteConstraintException) {
-                    }
+            appDb.withTransaction {
+                fileToListT<ReadRecord>(path, "readRecord.json")?.forEach { readRecord ->
+                    try { restoreReadRecord(readRecord) } catch (_: SQLiteConstraintException) { }
+                }
+                fileToListT<ReadRecordDetail>(path, "readRecordDetail.json")?.forEach { detail ->
+                    try { restoreReadRecordDetail(detail) } catch (_: SQLiteConstraintException) { }
+                }
+                fileToListT<ReadRecordSession>(path, "readRecordSession.json")?.forEach { session ->
+                    try { restoreReadRecordSession(session) } catch (_: SQLiteConstraintException) { }
                 }
             }
-            fileToListT<ReadRecordDetail>(path, "readRecordDetail.json")?.let {
-                it.forEach { detail ->
-                    try {
-                        restoreReadRecordDetail(detail)
-                    } catch (_: SQLiteConstraintException) {
-                    }
-                }
-            }
-            fileToListT<ReadRecordSession>(path, "readRecordSession.json")?.let {
-                it.forEach { session ->
-                    try {
-                        restoreReadRecordSession(session)
-                    } catch (_: SQLiteConstraintException) {
-                    }
-                }
-            }
+            reconcileReadRecordAliases()
+            // 会话导入按身份去重（幂等），汇总/明细取较大值后按会话重算，
+            // 避免同一备份重复导入导致阅读时长翻倍。
+            get<ReadRecordRepository>().reconcileRestoredReadRecordTotals()
         }
         if (BackupConfig.dbIsNotIgnored("server")) {
             File(path, "servers.json").takeIf {
@@ -362,7 +366,7 @@ object Restore : KoinComponent {
             get<ReadStyleGateway>().refresh()
             // refresh 只重建 Compose 侧 state；阅读器开着时渲染层的两份快照（RenderStyle/
             // TipStyle）与已排版内容不会跟着刷新，得走配置总线让 controller 重建并重排。
-            // 阅读器没开时无人消费，重开由 ReadView.init 的重建入口兜底。
+            // 阅读器没开时无人消费，重开后由 Compose 阅读路由的分页重建入口兜底。
             ReadConfigUpdateBus.post(
                 setOf(
                     ConfigUpdateAction.UpdateBackground,
@@ -388,7 +392,7 @@ object Restore : KoinComponent {
         appCtx.toastOnUi(R.string.restore_success)
         withContext(Main) {
             delay(100)
-            get<AppLocaleGateway>().setLanguage(OtherConfig.language)
+            get<AppLocaleGateway>().apply { setLanguage(currentLanguage) }
             if (!BuildConfig.DEBUG) {
                 LauncherIconHelp.changeIcon(appCtx.getPrefString(PreferKey.launcherIcon))
             }
@@ -421,48 +425,91 @@ object Restore : KoinComponent {
         }
     }
 
+    /** 导入汇总记录时统一到本地分区，取已有与导入两者中的较大时长，保证重复导入幂等。 */
     private suspend fun restoreReadRecord(readRecord: ReadRecord) {
+        val localRecord = readRecord.copy(
+            deviceId = LOCAL_READ_RECORD_DEVICE_ID,
+            bookName = ReadRecordIdentity.bookName(readRecord.bookName),
+            bookAuthor = ReadRecordIdentity.author(readRecord.bookAuthor)
+        )
         val existing = appDb.readRecordDao.getReadRecord(
-            readRecord.deviceId,
-            readRecord.bookName,
-            readRecord.bookAuthor
+            localRecord.deviceId,
+            localRecord.bookName,
+            localRecord.bookAuthor
         )
         appDb.readRecordDao.insert(
             existing?.copy(
-                readTime = maxOf(existing.readTime, readRecord.readTime),
-                lastRead = maxOf(existing.lastRead, readRecord.lastRead)
-            ) ?: readRecord
+                readTime = maxOf(existing.readTime, localRecord.readTime),
+                lastRead = maxOf(existing.lastRead, localRecord.lastRead)
+            ) ?: localRecord
         )
     }
 
+    /** 导入每日详情时统一到本地分区，取已有与导入两者中的较大统计值，保证重复导入幂等。 */
     private suspend fun restoreReadRecordDetail(detail: ReadRecordDetail) {
+        val localDetail = detail.copy(
+            deviceId = LOCAL_READ_RECORD_DEVICE_ID,
+            bookName = ReadRecordIdentity.bookName(detail.bookName),
+            bookAuthor = ReadRecordIdentity.author(detail.bookAuthor)
+        )
         val existing = appDb.readRecordDao.getDetail(
-            detail.deviceId,
-            detail.bookName,
-            detail.bookAuthor,
-            detail.date
+            localDetail.deviceId,
+            localDetail.bookName,
+            localDetail.bookAuthor,
+            localDetail.date
         )
         appDb.readRecordDao.insertDetail(
             existing?.copy(
-                readTime = maxOf(existing.readTime, detail.readTime),
-                readWords = maxOf(existing.readWords, detail.readWords),
-                firstReadTime = minPositive(existing.firstReadTime, detail.firstReadTime),
-                lastReadTime = maxOf(existing.lastReadTime, detail.lastReadTime)
-            ) ?: detail
+                readTime = maxOf(existing.readTime, localDetail.readTime),
+                readWords = maxOf(existing.readWords, localDetail.readWords),
+                firstReadTime = minPositive(existing.firstReadTime, localDetail.firstReadTime),
+                lastReadTime = maxOf(existing.lastReadTime, localDetail.lastReadTime)
+            ) ?: localDetail
         )
     }
 
+    /** 导入会话时统一到本地分区，并按完整会话身份跳过已有副本。 */
     private suspend fun restoreReadRecordSession(session: ReadRecordSession) {
+        val localSession = session.copy(
+            deviceId = LOCAL_READ_RECORD_DEVICE_ID,
+            bookName = ReadRecordIdentity.bookName(session.bookName),
+            bookAuthor = ReadRecordIdentity.author(session.bookAuthor)
+        )
         val existing = appDb.readRecordDao.getSession(
-            session.deviceId,
-            session.bookName,
-            session.bookAuthor,
-            session.startTime,
-            session.endTime
+            localSession.deviceId,
+            localSession.bookName,
+            localSession.bookAuthor,
+            localSession.startTime,
+            localSession.endTime,
+            localSession.words
         )
         if (existing == null) {
-            appDb.readRecordDao.insertSession(session)
+            appDb.readRecordDao.insertSession(localSession)
         }
+    }
+
+    /** 导入完成后，将能唯一匹配书架作者的旧空作者记录迁移到规范作者。 */
+    private suspend fun reconcileReadRecordAliases() {
+        val repository = get<ReadRecordRepository>()
+        appDb.readRecordDao.all
+            .filter { it.bookAuthor.isBlank() }
+            .forEach { source ->
+                val authors = appDb.bookDao.findByName(source.bookName)
+                    .asSequence()
+                    .map { it.author.trim() }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .toList()
+                val author = authors.singleOrNull() ?: return@forEach
+                repository.mergeIndependentReadRecordsInto(
+                    targetRecord = ReadRecord(
+                        deviceId = source.deviceId,
+                        bookName = source.bookName,
+                        bookAuthor = ReadRecordIdentity.author(author),
+                    ),
+                    sourceRecords = listOf(source),
+                )
+            }
     }
 
     private fun minPositive(left: Long, right: Long): Long {

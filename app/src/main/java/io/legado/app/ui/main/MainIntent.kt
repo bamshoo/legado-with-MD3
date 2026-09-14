@@ -6,6 +6,7 @@ import io.legado.app.ui.config.ConfigTag
 
 object MainIntent {
     const val EXTRA_START_ROUTE = "startRoute"
+    internal const val EXTRA_ROUTE_HOME_AS_PARENT = "routeHomeAsParent"
     const val EXTRA_CACHE_GROUP_ID = "extra_cache_group_id"
     const val EXTRA_SEARCH_KEY = "extra_search_key"
     const val EXTRA_SEARCH_SCOPE = "extra_search_scope"
@@ -22,9 +23,18 @@ object MainIntent {
     const val EXTRA_CHAPTER_CHANGED = "chapterChanged"
     const val EXTRA_EXPLORE_NAME = "exploreName"
     const val EXTRA_SOURCE_URL = "sourceUrl"
+    const val EXTRA_BOOK_SOURCE_IMPORT = "bookSourceImport"
     const val EXTRA_SOURCE_LOGIN_TYPE = "source_login_type"
     const val EXTRA_SOURCE_LOGIN_KEY = "source_login_key"
     const val EXTRA_EXPLORE_URL = "exploreUrl"
+    const val EXTRA_WEB_VIEW_TITLE = "title"
+    const val EXTRA_WEB_VIEW_URL = "url"
+    const val EXTRA_WEB_VIEW_SOURCE_ORIGIN = "sourceOrigin"
+    const val EXTRA_WEB_VIEW_SOURCE_NAME = "sourceName"
+    const val EXTRA_WEB_VIEW_SOURCE_TYPE = "sourceType"
+    const val EXTRA_WEB_VIEW_VERIFICATION = "sourceVerificationEnable"
+    const val EXTRA_WEB_VIEW_REFETCH = "refetchAfterSuccess"
+    const val EXTRA_WEB_VIEW_HTML = "html"
 
     const val EXTRA_RSS_SOURCE_URL = "extra_rss_source_url"
     const val EXTRA_RSS_SORT_URL = "extra_rss_sort_url"
@@ -57,15 +67,49 @@ object MainIntent {
         sourceKey: String? = null,
         bookUrl: String? = null,
     ): Intent = createLauncherIntent(context).apply {
+        // NEW_TASK: 支持从 Application context（如 RssJsExtensions）启动；
+        // SINGLE_TOP: MainActivity 已在栈顶时复用现有实例走 onNewIntent，直接把登录路由
+        // 压进 nav3 back stack，避免 standard launchMode 下新建 MainActivity 先回主页面。
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         putExtra(EXTRA_START_ROUTE, MainRouteConst.ROUTE_SOURCE_LOGIN)
         putExtra(EXTRA_SOURCE_LOGIN_TYPE, type.name)
         putExtra(EXTRA_SOURCE_LOGIN_KEY, sourceKey)
         putExtra(EXTRA_BOOK_URL, bookUrl)
     }
 
-    fun createBookSourceManageIntent(context: Context): Intent =
+    fun createWebViewIntent(
+        context: Context,
+        title: String? = null,
+        url: String,
+        sourceOrigin: String? = null,
+        sourceName: String? = null,
+        sourceType: Int? = null,
+        sourceVerificationEnable: Boolean = false,
+        refetchAfterSuccess: Boolean = true,
+        html: String? = null,
+    ): Intent = createLauncherIntent(context).apply {
+        // NEW_TASK: 支持从 Application context（如 SourceVerificationHelp）启动；
+        // SINGLE_TOP: MainActivity 已在栈顶时复用现有实例走 onNewIntent，直接把路由压进 nav3 back stack。
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        putExtra(EXTRA_START_ROUTE, MainRouteConst.ROUTE_WEB_VIEW)
+        putExtra(EXTRA_WEB_VIEW_TITLE, title)
+        putExtra(EXTRA_WEB_VIEW_URL, url)
+        putExtra(EXTRA_WEB_VIEW_SOURCE_ORIGIN, sourceOrigin)
+        putExtra(EXTRA_WEB_VIEW_SOURCE_NAME, sourceName)
+        sourceType?.let { putExtra(EXTRA_WEB_VIEW_SOURCE_TYPE, it) }
+        putExtra(EXTRA_WEB_VIEW_VERIFICATION, sourceVerificationEnable)
+        putExtra(EXTRA_WEB_VIEW_REFETCH, refetchAfterSuccess)
+        putExtra(EXTRA_WEB_VIEW_HTML, html)
+    }
+
+    fun createBookSourceManageIntent(
+        context: Context,
+        importSource: String? = null,
+    ): Intent =
         createLauncherIntent(context).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(EXTRA_START_ROUTE, MainRouteConst.ROUTE_BOOK_SOURCE_MANAGE)
+            putExtra(EXTRA_BOOK_SOURCE_IMPORT, importSource)
         }
 
     fun createBookSourceEditIntent(context: Context, sourceUrl: String? = null): Intent =
@@ -168,6 +212,45 @@ object MainIntent {
             putExtra(EXTRA_IN_BOOKSHELF, inBookshelf)
             putExtra(EXTRA_CHAPTER_CHANGED, chapterChanged)
         }
+    }
+
+    fun createReadBookMediaControlIntent(context: Context): Intent =
+        createReadBookIntent(context, readAloud = true).apply {
+            // 复用 launcher Activity 并移除其上层的旧 Activity；Nav3 父栈另行重建，
+            // 让阅读页返回时始终落到主页。
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+            putExtra(EXTRA_ROUTE_HOME_AS_PARENT, true)
+        }
+
+    internal fun shouldOpenRouteWithHomeParent(intent: Intent?): Boolean =
+        intent?.getBooleanExtra(EXTRA_ROUTE_HOME_AS_PARENT, false) == true
+
+    fun createReadMangaIntent(
+        context: Context,
+        bookUrl: String? = null,
+        inBookshelf: Boolean = true,
+        chapterChanged: Boolean = false,
+    ): Intent = createLauncherIntent(context).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        putExtra(EXTRA_START_ROUTE, MainRouteConst.ROUTE_READ_MANGA)
+        bookUrl?.let { putExtra(EXTRA_BOOK_URL, it) }
+        putExtra(EXTRA_IN_BOOKSHELF, inBookshelf)
+        putExtra(EXTRA_CHAPTER_CHANGED, chapterChanged)
+    }
+
+    fun createAudioPlayIntent(
+        context: Context,
+        bookUrl: String? = null,
+        inBookshelf: Boolean = true,
+    ): Intent = createLauncherIntent(context).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        putExtra(EXTRA_START_ROUTE, MainRouteConst.ROUTE_AUDIO_PLAY)
+        bookUrl?.let { putExtra(EXTRA_BOOK_URL, it) }
+        putExtra(EXTRA_IN_BOOKSHELF, inBookshelf)
     }
 
     fun createSearchIntent(

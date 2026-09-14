@@ -18,7 +18,21 @@ data class MainRouteSourceLogin(
 ) : MainRoute
 
 @Serializable
-data object MainRouteBookSourceManage : MainRoute
+data class MainRouteWebView(
+    val title: String? = null,
+    val url: String,
+    val sourceOrigin: String? = null,
+    val sourceName: String? = null,
+    val sourceType: Int? = null,
+    val sourceVerificationEnable: Boolean = false,
+    val refetchAfterSuccess: Boolean = true,
+    val html: String? = null,
+) : MainRoute
+
+@Serializable
+data class MainRouteBookSourceManage(
+    val importUrl: String? = null,
+) : MainRoute
 
 @Serializable
 data class MainRouteBookSourceEdit(val sourceUrl: String? = null) : MainRoute
@@ -121,6 +135,22 @@ data class MainRouteReadBook(
     val readAloud: Boolean = false,
     val inBookshelf: Boolean = true,
     val chapterChanged: Boolean = false,
+    val sharedCoverKey: String? = null,
+) : MainRoute
+
+@Serializable
+data class MainRouteReadManga(
+    val bookUrl: String? = null,
+    val inBookshelf: Boolean = true,
+    val chapterChanged: Boolean = false,
+    /** Distinguishes repeated open requests for the same book after an external TOC selection. */
+    val openRequestId: Long = 0L,
+) : MainRoute
+
+@Serializable
+data class MainRouteAudioPlay(
+    val bookUrl: String? = null,
+    val inBookshelf: Boolean = true,
 ) : MainRoute
 
 @Serializable
@@ -218,6 +248,7 @@ data object MainRouteAbout : MainRoute
 object MainRouteConst {
     const val ROUTE_MAIN = "main"
     const val ROUTE_SOURCE_LOGIN = "source/login"
+    const val ROUTE_WEB_VIEW = "web/view"
     const val ROUTE_BOOK_SOURCE_MANAGE = "source/book/manage"
     const val ROUTE_BOOK_SOURCE_EDIT = "source/book/edit"
     const val ROUTE_RSS_SOURCE_MANAGE = "source/rss/manage"
@@ -244,6 +275,8 @@ object MainRouteConst {
     const val ROUTE_CACHE = "cache"
     const val ROUTE_BOOK_CACHE_MANAGE = "book/cache/manage"
     const val ROUTE_READ_BOOK = "book/read"
+    const val ROUTE_READ_MANGA = "book/read/manga"
+    const val ROUTE_AUDIO_PLAY = "book/read/audio"
     const val ROUTE_SEARCH = "search"
     const val ROUTE_SEARCH_CONTENT = "book/searchContent"
     const val ROUTE_BOOK_INFO = "book/info"

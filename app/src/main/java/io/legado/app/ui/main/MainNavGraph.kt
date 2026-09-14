@@ -1,13 +1,17 @@
 package io.legado.app.ui.main
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -28,19 +32,32 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.metadata
 import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
+import coil3.ImageLoader
 import io.legado.app.R
+import io.legado.app.constant.BookType
+import io.legado.app.constant.Status
 import io.legado.app.domain.model.BookSearchScope
 import io.legado.app.domain.model.settings.AppUiConfiguration
 import io.legado.app.domain.model.settings.isEInkMode
-import io.legado.app.model.Download
+import io.legado.app.fanqie.FanqieConstants
 import io.legado.app.fanqie.ui.FanqieScreen
 import io.legado.app.fanqie.ui.FanqieViewModel
+import io.legado.app.help.coil.CoverExtras
+import io.legado.app.model.AudioPlay
+import io.legado.app.model.Download
+import io.legado.app.model.SourceCallBack
+import io.legado.app.service.AudioPlayService
 import io.legado.app.ui.about.AboutEffect
 import io.legado.app.ui.about.AboutScreen
 import io.legado.app.ui.about.AboutViewModel
 import io.legado.app.ui.ai.chat.AiChatRouteScreen
+import io.legado.app.ui.book.audio.AudioPlayEffect
+import io.legado.app.ui.book.audio.AudioPlayIntent
+import io.legado.app.ui.book.audio.AudioPlayScreenContent
+import io.legado.app.ui.book.audio.AudioPlayViewModel
 import io.legado.app.ui.book.cache.manage.BookCacheManageRouteScreen
 import io.legado.app.ui.book.explore.ExploreShowIntent
 import io.legado.app.ui.book.explore.ExploreShowRouteScreen
@@ -68,10 +85,14 @@ import io.legado.app.ui.book.knowledge.CharacterDetailIntent
 import io.legado.app.ui.book.knowledge.deleteCharacterAvatar
 import io.legado.app.ui.book.knowledge.saveCharacterAvatar
 import io.legado.app.ui.book.manage.BookshelfManageRouteScreen
+import io.legado.app.ui.book.manga.MangaReaderRouteScreen
+import io.legado.app.ui.book.manga.MangaReaderViewModel
 import io.legado.app.ui.book.read.ReadBookController
+import io.legado.app.ui.book.read.ReadBookInitRequest
 import io.legado.app.ui.book.read.ReadBookIntent
 import io.legado.app.ui.book.read.ReadBookRouteScreen
 import io.legado.app.ui.book.read.ReadBookViewModel
+import io.legado.app.ui.book.read.ReaderSessionViewModel
 import io.legado.app.ui.book.readRecord.ReadRecordOverviewRouteScreen
 import io.legado.app.ui.book.readRecord.ReadRecordRouteScreen
 import io.legado.app.ui.book.readaloud.cache.TtsCacheRouteScreen
@@ -91,6 +112,8 @@ import io.legado.app.ui.book.source.debug.BookSourceDebugViewModel
 import io.legado.app.ui.book.source.edit.BookSourceEditRoute
 import io.legado.app.ui.book.source.edit.BookSourceEditViewModel
 import io.legado.app.ui.book.source.manage.BookSourceRouteScreen
+import io.legado.app.ui.browser.WebViewModel
+import io.legado.app.ui.browser.WebViewRouteScreen
 import io.legado.app.ui.config.ConfigNavScreen
 import io.legado.app.ui.config.ai.AiConfigRouteScreen
 import io.legado.app.ui.config.ai.AiModelEditRouteScreen
@@ -124,7 +147,12 @@ import io.legado.app.ui.rss.source.edit.RssSourceEditRoute
 import io.legado.app.ui.rss.source.edit.RssSourceEditViewModel
 import io.legado.app.ui.rss.source.manage.RssSourceRouteScreen
 import io.legado.app.ui.rss.subscription.RuleSubRouteScreen
+import io.legado.app.ui.theme.ProvideThemeOverride
+import io.legado.app.ui.theme.rememberImageSeedColor
+import io.legado.app.ui.theme.rememberThemeOverride
+import io.legado.app.ui.widget.components.changeSource.ChangeSourceSheet
 import io.legado.app.utils.openUrl
+import io.legado.app.utils.sendToClip
 import io.legado.app.utils.startActivityForBook
 import io.legado.app.utils.toastOnUi
 import io.legado.app.utils.toggleSystemBar
@@ -134,7 +162,55 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
+
+/**
+ * WebView 类页面（内置浏览器、订阅阅读）只做位移转场。
+ *
+ * WebView 是 AndroidView interop view：所在子树一旦被加上 graphicsLayer（fade 的 alpha、
+ * scaleOut 的缩放），Compose 会把网页一并画进离屏 RenderNode
+ * （`AndroidViewHolder.draw` → `AndroidComposeView.drawAndroidView`），Chromium 在这条绘制路径上
+ * 不稳定，部分设备会表现为网页闪烁。`slideIntoContainer` / `slideOutOfContainer` 只改 layout
+ * offset、不产生图层，所以这里保留默认的位移与时长，去掉 fade 与 scale。
+ */
+private fun webViewEntryMetadata(predictiveBackEnabled: Boolean) = metadata {
+    put(NavDisplay.TransitionKey) {
+        slideIntoContainer(
+            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+            animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+            initialOffset = { fullWidth -> fullWidth }
+        ) togetherWith slideOutOfContainer(
+            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+            animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+            targetOffset = { fullWidth -> fullWidth / 4 }
+        )
+    }
+    put(NavDisplay.PopTransitionKey) {
+        slideIntoContainer(
+            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+            animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+            initialOffset = { fullWidth -> -fullWidth / 4 }
+        ) togetherWith slideOutOfContainer(
+            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+            animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+            targetOffset = { fullWidth -> fullWidth }
+        )
+    }
+    if (predictiveBackEnabled) {
+        put(NavDisplay.PredictivePopTransitionKey) { _ ->
+            slideIntoContainer(
+                towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(easing = FastOutSlowInEasing),
+                initialOffset = { fullWidth -> -fullWidth / 4 }
+            ) togetherWith slideOutOfContainer(
+                towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(easing = FastOutSlowInEasing),
+                targetOffset = { fullWidth -> fullWidth }
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 fun MainActivity.mainEntryProvider(
@@ -146,9 +222,42 @@ fun MainActivity.mainEntryProvider(
     onNavigateToRoute: (NavKey) -> Unit,
     onNavigateBack: () -> Unit,
 ) = entryProvider {
+    entry<MainRouteWebView>(
+        metadata = webViewEntryMetadata(configuration.appShell.predictiveBackEnabled)
+    ) { route ->
+        val viewModel = koinViewModel<WebViewModel>(
+            key = "WebView:${route.url}:${route.sourceOrigin}:${route.sourceVerificationEnable}",
+        )
+        val browserIntent = remember(route) {
+            Intent().apply {
+                putExtra("title", route.title)
+                putExtra("url", route.url)
+                putExtra("sourceOrigin", route.sourceOrigin)
+                putExtra("sourceName", route.sourceName)
+                route.sourceType?.let { putExtra("sourceType", it) }
+                putExtra("sourceVerificationEnable", route.sourceVerificationEnable)
+                putExtra("refetchAfterSuccess", route.refetchAfterSuccess)
+                putExtra("html", route.html)
+            }
+        }
+        WebViewRouteScreen(
+            intent = browserIntent,
+            viewModel = viewModel,
+            onFinish = onNavigateBack,
+            onImportBookSource = { importUrl ->
+                onNavigateToRoute(MainRouteBookSourceManage(importUrl))
+            },
+        )
+    }
     entry<MainRouteSourceLogin>(
         metadata = ModalOverlaySceneStrategy.modalOverlay(),
     ) { route ->
+        DisposableEffect(route) {
+            MainActivity.hasActiveSourceLoginRoute = true
+            onDispose {
+                MainActivity.hasActiveSourceLoginRoute = false
+            }
+        }
         val viewModel = koinViewModel<SourceLoginViewModel>(
             key = "SourceLogin:${route.type}:${route.sourceKey}:${route.bookUrl}",
         )
@@ -159,8 +268,11 @@ fun MainActivity.mainEntryProvider(
             onBack = onNavigateBack,
         )
     }
-    entry<MainRouteBookSourceManage> {
+    entry<MainRouteBookSourceManage> { route ->
         BookSourceRouteScreen(
+            initialImportUrl = route.importUrl,
+            closeAfterImport = route.importUrl != null,
+            onImportClosed = onNavigateBack,
             onBackClick = onNavigateBack,
             onAddSource = { onNavigateToRoute(MainRouteBookSourceEdit()) },
             onEditSource = { onNavigateToRoute(MainRouteBookSourceEdit(it)) },
@@ -283,11 +395,18 @@ fun MainActivity.mainEntryProvider(
             onNavigateToBookCacheManage = {
                 onNavigateToRoute(MainRouteBookCacheManage)
             },
-            onOpenBookshelfBook = { book ->
-                if (book.isAudio || (!book.isLocal && book.isImage && showMangaUi)) {
+            onOpenBookshelfBook = { book, sharedCoverKey ->
+                if (book.isAudio) {
                     this@mainEntryProvider.startActivityForBook(book)
+                } else if (!book.isLocal && book.isImage && showMangaUi) {
+                    onNavigateToRoute(MainRouteReadManga(bookUrl = book.bookUrl))
                 } else {
-                    onNavigateToRoute(MainRouteReadBook(bookUrl = book.bookUrl))
+                    onNavigateToRoute(
+                        MainRouteReadBook(
+                            bookUrl = book.bookUrl,
+                            sharedCoverKey = sharedCoverKey,
+                        )
+                    )
                 }
             },
             onNavigateToBackupSettings = {
@@ -318,7 +437,7 @@ fun MainActivity.mainEntryProvider(
                 onNavigateToRoute(MainRouteSourceLogin(type, sourceUrl))
             },
             onNavigateToBookSourceManage = {
-                onNavigateToRoute(MainRouteBookSourceManage)
+                onNavigateToRoute(MainRouteBookSourceManage())
             },
             onNavigateToBookSourceEdit = {
                 onNavigateToRoute(MainRouteBookSourceEdit(it))
@@ -379,6 +498,16 @@ fun MainActivity.mainEntryProvider(
             onIntent = viewModel::onIntent,
             effects = viewModel.effects,
             onBack = { onNavigateBack() },
+            onOpenWebView = { title, url ->
+                backStack.add(
+                    MainRouteWebView(
+                        title = title,
+                        url = url,
+                        sourceOrigin = FanqieConstants.BASE_URL,
+                        sourceName = FanqieConstants.ORIGIN_NAME,
+                    )
+                )
+            },
         )
     }
 
@@ -549,25 +678,46 @@ fun MainActivity.mainEntryProvider(
         )
     }
 
-    entry<MainRouteReadBook> { route ->
+    entry<MainRouteReadBook>(
+        metadata = metadata {
+            put(NavDisplay.TransitionKey) {
+                fadeIn(animationSpec = tween(600)) togetherWith
+                        fadeOut(animationSpec = tween(600))
+            }
+            put(NavDisplay.PopTransitionKey) {
+                fadeIn(animationSpec = tween(600)) togetherWith
+                        fadeOut(animationSpec = tween(600))
+            }
+            if (configuration.appShell.predictiveBackEnabled) {
+                put(NavDisplay.PredictivePopTransitionKey) { _ ->
+                    fadeIn(animationSpec = tween(600)) togetherWith
+                            fadeOut(animationSpec = tween(600))
+                }
+            }
+        }
+    ) { route ->
         val readBookViewModel = koinViewModel<ReadBookViewModel>(
             key = "ReadBook:${route.bookUrl ?: "last-read"}"
         )
-        val controller = remember(readBookViewModel) {
-            ReadBookController(this@mainEntryProvider, readBookViewModel)
+        val readerSessionViewModel = koinViewModel<ReaderSessionViewModel>(
+            key = "ReaderSession:${route.bookUrl ?: "last-read"}"
+        )
+        val controller = remember(readBookViewModel, readerSessionViewModel) {
+            ReadBookController(
+                this@mainEntryProvider,
+                readBookViewModel,
+                readerSessionViewModel,
+            )
         }
-        // ReadView 在首次组合时就会画一帧, 必须在它之前告诉 ViewModel 本路由要打开哪本书。
+        // Canvas 阅读面在首次组合时就会请求分页，必须先告诉 ViewModel 本路由要打开哪本书。
         // 刻意用 remember 而非 LaunchedEffect：后者在组合之后才跑，赶不上首帧。
         @Suppress("RememberReturnType")
         remember(readBookViewModel, route) {
-            readBookViewModel.prepareCachedChapterFallback(route.bookUrl, route.chapterChanged)
         }
         val lifecycleOwner = LocalLifecycleOwner.current
-        val readIntent = remember(route) {
-            MainActivity.createReadBookIntent(
-                context = this@mainEntryProvider,
+        val initRequest = remember(route) {
+            ReadBookInitRequest(
                 bookUrl = route.bookUrl,
-                readAloud = route.readAloud,
                 inBookshelf = route.inBookshelf,
                 chapterChanged = route.chapterChanged,
             )
@@ -591,8 +741,12 @@ fun MainActivity.mainEntryProvider(
 
         ReadBookRouteScreen(
             viewModel = readBookViewModel,
+            readerSessionViewModel = readerSessionViewModel,
             host = controller,
             controller = controller,
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = LocalNavAnimatedContentScope.current,
+            sharedCoverKey = route.sharedCoverKey,
             onEffectsReady = { effectsReady.complete(Unit) },
             onOpenSearch = { word, bookUrl, autoFocus ->
                 onNavigateToRoute(
@@ -653,16 +807,182 @@ fun MainActivity.mainEntryProvider(
         }
 
         LaunchedEffect(route, readBookViewModel, lifecycleOwner) {
+            // Resolving the book and applying its read style do not depend on launcher effects.
+            // Start that I/O immediately; initData still waits below because it can emit effects.
+            val initialBook = readBookViewModel.initReadBookConfig(initRequest)
             effectsReady.await()
             collectorReady[0] = true
-            readBookViewModel.initReadBookConfig(readIntent)
-            readBookViewModel.initData(readIntent) {
+            readBookViewModel.initData(initRequest, initialBook) {
                 readBookViewModel.markJustInitData()
                 controller.onRouteInitialized()
                 if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
                     resumeReader()
                 }
             }
+        }
+    }
+
+    entry<MainRouteReadManga> { route ->
+        val mangaViewModel = koinViewModel<MangaReaderViewModel>(
+            key = "ReadManga:${route.bookUrl ?: "last-read"}",
+        )
+        MangaReaderRouteScreen(
+            bookUrl = route.bookUrl,
+            inBookshelf = route.inBookshelf,
+            chapterChanged = route.chapterChanged,
+            openRequestId = route.openRequestId,
+            viewModel = mangaViewModel,
+            restoreSystemBarsVisible = configuration.appShell.showStatusBar,
+            onFinish = { onNavigateBack() },
+            onOpenBookInfo = { name, author, bookUrl ->
+                onNavigateToRoute(MainRouteBookInfo(name, author, bookUrl))
+            },
+            onOpenSourceLogin = { sourceUrl ->
+                onNavigateToRoute(MainRouteSourceLogin(SourceLoginType.BookSource, sourceUrl))
+            },
+            onOpenSourceEdit = { sourceUrl ->
+                onNavigateToRoute(MainRouteBookSourceEdit(sourceUrl))
+            },
+            onOpenWebView = { title, url, sourceOrigin, sourceName, sourceType ->
+                onNavigateToRoute(
+                    MainRouteWebView(title, url, sourceOrigin, sourceName, sourceType)
+                )
+            },
+        )
+    }
+
+    entry<MainRouteAudioPlay> { route ->
+        val audioPlayViewModel = koinViewModel<AudioPlayViewModel>(
+            key = "AudioPlay:${route.bookUrl}",
+        )
+        val lifecycleOwner = LocalLifecycleOwner.current
+        val uiState by audioPlayViewModel.uiState.collectAsStateWithLifecycle()
+        var showAudioChangeSource by remember { mutableStateOf(false) }
+        val imageLoader: ImageLoader = koinInject()
+        val sourceEditResult = rememberLauncherForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) {
+            if (it.resultCode == Activity.RESULT_OK) {
+                audioPlayViewModel.onIntent(AudioPlayIntent.SourceEdited)
+            }
+        }
+
+        fun copyAudioPlayUrl() {
+            AudioPlay.book?.let {
+                SourceCallBack.callBackBtn(
+                    this@mainEntryProvider,
+                    SourceCallBack.CLICK_COPY_PLAY_URL,
+                    AudioPlay.bookSource,
+                    it,
+                    AudioPlay.durChapter,
+                    BookType.audio,
+                ) {
+                    sendToClip(AudioPlayService.url)
+                }
+            }
+        }
+
+        fun finishAudioPlay() {
+            if (AudioPlay.inBookshelf) {
+                SourceCallBack.callBackBook(
+                    SourceCallBack.END_READ,
+                    AudioPlay.bookSource,
+                    AudioPlay.book,
+                    AudioPlay.durChapter
+                )
+            }
+            onNavigateBack()
+        }
+
+        LaunchedEffect(route, audioPlayViewModel) {
+            audioPlayViewModel.onIntent(
+                AudioPlayIntent.Init(route.bookUrl.orEmpty(), route.inBookshelf)
+            )
+        }
+        DisposableEffect(audioPlayViewModel, lifecycleOwner) {
+            MainActivity.hasActiveAudioPlayRoute = true
+            this@mainEntryProvider.activeAudioPlayViewModel = audioPlayViewModel
+            AudioPlay.register(this@mainEntryProvider)
+            onDispose {
+                if (AudioPlay.status != Status.PLAY) {
+                    AudioPlay.stop()
+                }
+                AudioPlay.unregister(this@mainEntryProvider)
+                if (this@mainEntryProvider.activeAudioPlayViewModel === audioPlayViewModel) {
+                    this@mainEntryProvider.activeAudioPlayViewModel = null
+                }
+                MainActivity.hasActiveAudioPlayRoute = false
+            }
+        }
+        LaunchedEffect(audioPlayViewModel) {
+            audioPlayViewModel.effects.collectLatest { effect ->
+                when (effect) {
+                    is AudioPlayEffect.OpenChangeSource -> showAudioChangeSource = true
+
+                    is AudioPlayEffect.OpenLogin -> startActivity(
+                        MainActivity.createSourceLoginIntent(
+                            this@mainEntryProvider,
+                            SourceLoginType.BookSource,
+                            effect.sourceUrl
+                        )
+                    )
+
+                    AudioPlayEffect.CopyPlayUrl -> copyAudioPlayUrl()
+                    is AudioPlayEffect.OpenEditSource -> sourceEditResult.launch(
+                        MainActivity.createBookSourceEditIntent(
+                            this@mainEntryProvider,
+                            effect.sourceUrl
+                        )
+                    )
+
+                    is AudioPlayEffect.ShowToast -> toastOnUi(effect.message)
+                    is AudioPlayEffect.OpenBookReader -> {
+                        startActivity(
+                            MainActivity.createReadBookIntent(
+                                this@mainEntryProvider,
+                                effect.bookUrl
+                            )
+                        )
+                        onNavigateBack()
+                    }
+
+                    AudioPlayEffect.Finish -> finishAudioPlay()
+                }
+            }
+        }
+        BackHandler {
+            audioPlayViewModel.onIntent(AudioPlayIntent.BackPressed)
+        }
+
+        // 封面动态取色：从封面提取主色作为本界面主题
+        val seedColor = rememberImageSeedColor(
+            imageLoader = imageLoader,
+            data = uiState.coverPath,
+            requestKey = listOf(uiState.coverPath, uiState.sourceOrigin),
+        ) {
+            extras[CoverExtras.SourceOrigin] = uiState.sourceOrigin
+        }
+        val themeOverride = rememberThemeOverride(seedColor)
+        ProvideThemeOverride(themeOverride) {
+            AudioPlayScreenContent(
+                state = uiState,
+                onIntent = audioPlayViewModel::onIntent,
+                onBack = { audioPlayViewModel.onIntent(AudioPlayIntent.BackPressed) },
+            )
+        }
+        val audioBook = AudioPlay.book
+        if (showAudioChangeSource && audioBook != null) {
+            ChangeSourceSheet(
+                show = true,
+                oldBook = audioBook,
+                onDismissRequest = { showAudioChangeSource = false },
+                onReplace = { source, book, toc, _ ->
+                    audioPlayViewModel.changeTo(source, book, toc)
+                },
+                onAddAsNew = { book, toc ->
+                    audioPlayViewModel.addToBookshelf(book, toc)
+                },
+            )
         }
     }
 
@@ -708,7 +1028,7 @@ fun MainActivity.mainEntryProvider(
                 )
             },
             onOpenSourceManage = {
-                onNavigateToRoute(MainRouteBookSourceManage)
+                onNavigateToRoute(MainRouteBookSourceManage())
             },
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = LocalNavAnimatedContentScope.current,
@@ -755,7 +1075,9 @@ fun MainActivity.mainEntryProvider(
         )
     }
 
-    entry<MainRouteRssRead> { route ->
+    entry<MainRouteRssRead>(
+        metadata = webViewEntryMetadata(configuration.appShell.predictiveBackEnabled)
+    ) { route ->
         RssReadRouteScreen(
             title = route.title,
             origin = route.origin,
@@ -763,10 +1085,10 @@ fun MainActivity.mainEntryProvider(
             openUrl = route.openUrl,
             startPage = route.startPage,
             onBackClick = { onNavigateBack() },
-            onOpenArticles = { sortUrl ->
+            onOpenArticles = { sortUrl, targetOrigin ->
                 onNavigateToRoute(
                     MainRouteRssSort(
-                        sourceUrl = route.origin,
+                        sourceUrl = targetOrigin ?: route.origin,
                         sortUrl = sortUrl
                     )
                 )
@@ -792,7 +1114,10 @@ fun MainActivity.mainEntryProvider(
 
     entry<MainRouteRuleSub> {
         RuleSubRouteScreen(
-            onBackClick = { onNavigateBack() }
+            onBackClick = { onNavigateBack() },
+            onImportBookSource = {
+                onNavigateToRoute(MainRouteBookSourceManage(it))
+            },
         )
     }
 
@@ -834,47 +1159,27 @@ fun MainActivity.mainEntryProvider(
     }
 
     entry<MainRouteBookInfo>(
-        metadata = if (configuration.theme.isEInkMode) {
-            NavDisplay.transitionSpec { EnterTransition.None togetherWith ExitTransition.None } +
-            NavDisplay.popTransitionSpec { EnterTransition.None togetherWith ExitTransition.None } +
-            NavDisplay.predictivePopTransitionSpec { _ -> EnterTransition.None togetherWith ExitTransition.None }
+metadata = if (configuration.theme.isEInkMode) {
+            metadata {
+                put(NavDisplay.TransitionKey) { EnterTransition.None togetherWith ExitTransition.None }
+                put(NavDisplay.PopTransitionKey) { EnterTransition.None togetherWith ExitTransition.None }
+                put(NavDisplay.PredictivePopTransitionKey) { _ -> EnterTransition.None togetherWith ExitTransition.None }
+            }
         } else {
-            NavDisplay.transitionSpec {
-                val from = initialState.key
-                val fromStr = from.toString()
-                if (from is MainRouteHome || from is MainRouteExploreShow || from is MainRouteSearch ||
-                    fromStr.startsWith("MainRouteHome") || fromStr.startsWith("MainRouteExploreShow") || fromStr.startsWith(
-                        "MainRouteSearch"
-                    )
-                ) {
+            metadata {
+                put(NavDisplay.TransitionKey) {
                     fadeIn(animationSpec = tween(300)) togetherWith
                             fadeOut(animationSpec = tween(300))
-                } else null
-            } + NavDisplay.popTransitionSpec {
-                val to = targetState.key
-                val toStr = to.toString()
-                if (to is MainRouteHome || to is MainRouteExploreShow || to is MainRouteSearch ||
-                    toStr.startsWith("MainRouteHome") || toStr.startsWith("MainRouteExploreShow") || toStr.startsWith(
-                        "MainRouteSearch"
-                    )
-                ) {
+                }
+                put(NavDisplay.PopTransitionKey) {
                     fadeIn(animationSpec = tween(300)) togetherWith
                             fadeOut(animationSpec = tween(300))
-                } else null
-            } + NavDisplay.predictivePopTransitionSpec { _ ->
-                if (!configuration.appShell.predictiveBackEnabled) {
-                    null
-                } else {
-                    val to = targetState.key
-                    val toStr = to.toString()
-                    if (to is MainRouteHome || to is MainRouteExploreShow || to is MainRouteSearch ||
-                        toStr.startsWith("MainRouteHome") || toStr.startsWith("MainRouteExploreShow") || toStr.startsWith(
-                            "MainRouteSearch"
-                        )
-                    ) {
+                }
+                if (configuration.appShell.predictiveBackEnabled) {
+                    put(NavDisplay.PredictivePopTransitionKey) { _ ->
                         fadeIn(animationSpec = tween(300)) togetherWith
                                 fadeOut(animationSpec = tween(300))
-                    } else null
+                    }
                 }
             }
         }
@@ -904,6 +1209,25 @@ fun MainActivity.mainEntryProvider(
                         bookUrl = bookUrl,
                         inBookshelf = inBookshelf,
                         chapterChanged = chapterChanged,
+                        sharedCoverKey = route.sharedCoverKey ?: bookCoverSharedElementKey(route.bookUrl),
+                    )
+                )
+            },
+            onOpenMangaReader = { bookUrl, inBookshelf, chapterChanged ->
+                onNavigateToRoute(
+                    MainRouteReadManga(
+                        bookUrl = bookUrl,
+                        inBookshelf = inBookshelf,
+                        chapterChanged = chapterChanged,
+                        openRequestId = System.nanoTime(),
+                    )
+                )
+            },
+            onOpenAudioPlay = { bookUrl, inBookshelf ->
+                onNavigateToRoute(
+                    MainRouteAudioPlay(
+                        bookUrl = bookUrl,
+                        inBookshelf = inBookshelf,
                     )
                 )
             },

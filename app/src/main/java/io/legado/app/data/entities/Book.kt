@@ -1,7 +1,6 @@
 package io.legado.app.data.entities
 
 import android.os.Parcelable
-import io.legado.app.help.book.applyTagGroupRulesForBook
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Ignore
@@ -15,6 +14,7 @@ import io.legado.app.constant.PageAnim
 import io.legado.app.data.appDb
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
+import io.legado.app.help.book.applyTagGroupRulesForBook
 import io.legado.app.help.book.getFolderNameNoCache
 import io.legado.app.help.book.isEpub
 import io.legado.app.help.book.isImage
@@ -191,6 +191,42 @@ data class Book(
             }
             return readConfig!!
         }
+
+    // 音频片头（秒）的 setter 和 getter
+    fun setOpenCredits(openCredits: Int) {
+        config.openCredits = openCredits
+    }
+
+    fun getOpenCredits(): Int {
+        return config.openCredits
+    }
+
+    // 音频片尾（秒）的 setter 和 getter
+    fun setCloseCredits(closeCredits: Int) {
+        config.closeCredits = closeCredits
+    }
+
+    fun getCloseCredits(): Int {
+        return config.closeCredits
+    }
+
+    // 音频播放模式 的 setter 和 getter
+    fun setPlayMode(playMode: Int) {
+        config.playMode = playMode
+    }
+
+    fun getPlayMode(): Int {
+        return config.playMode
+    }
+
+    // 音频增益（mB） 的 setter 和 getter
+    fun setAudioGain(audioGain: Int) {
+        config.audioGain = audioGain
+    }
+
+    fun getAudioGain(): Int {
+        return config.audioGain
+    }
 
     fun setReverseToc(reverseToc: Boolean) {
         config.reverseToc = reverseToc
@@ -393,6 +429,8 @@ data class Book(
         return Bookmark(
             bookName = name,
             bookAuthor = author,
+            // 源指纹：创建时的书源，跳转校验用（换源后位置可能偏移）
+            bookUrl = bookUrl,
         )
     }
 
@@ -445,7 +483,12 @@ data class Book(
 
         var fixedType: Boolean = false, // 固定书籍类型,不随书源更新
 
-        var translationMode: Boolean = false // 是否启用翻译阅读模式
+        var translationMode: Boolean = false, // 是否启用翻译阅读模式
+
+        var openCredits: Int = 0,    // 音频片头（秒）
+        var closeCredits: Int = 0,   // 音频片尾（秒）
+        var playMode: Int = 0,       // 音频播放模式
+        var audioGain: Int = 0       // 音频增益（mB，-6000..6000）
 
     ) : Parcelable
 

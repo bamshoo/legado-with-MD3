@@ -1,6 +1,7 @@
 package io.legado.app.ui.book.readaloud.player
 
 import androidx.compose.runtime.Stable
+import io.legado.app.ui.widget.components.player.PlayerChapterUi
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 
@@ -19,6 +20,7 @@ data class ReadAloudPlayerUiState(
     val sourceOrigin: String? = null,
     val chapterIndex: Int = -1,
     val chapterTitle: String = "",
+    val chapters: ImmutableList<PlayerChapterUi> = persistentListOf(),
     val chapterText: String = "",
     val textLines: ImmutableList<ReadAloudTextLineUi> = persistentListOf(),
     val activeTextLine: Int = -1,
@@ -31,8 +33,15 @@ data class ReadAloudPlayerUiState(
     val isPaused: Boolean = false,
     val speed: Int = 10,
     val timerMinutes: Int = 0,
+    val finishCurrentChapterAfterTimer: Boolean = false,
     val bgMode: Int = 0,
+    val activeSheet: ReadAloudPlayerSheet? = null,
 )
+
+sealed interface ReadAloudPlayerSheet {
+    data object Speed : ReadAloudPlayerSheet
+    data object Timer : ReadAloudPlayerSheet
+}
 
 sealed interface ReadAloudPlayerIntent {
     data object Refresh : ReadAloudPlayerIntent
@@ -43,15 +52,18 @@ sealed interface ReadAloudPlayerIntent {
     data object NextParagraph : ReadAloudPlayerIntent
     data object OpenSettings : ReadAloudPlayerIntent
     data object SwitchToClassic : ReadAloudPlayerIntent
-    data object OpenToc : ReadAloudPlayerIntent
+    data object CycleBgMode : ReadAloudPlayerIntent
+    data class SelectChapter(val index: Int) : ReadAloudPlayerIntent
     data class SetBgMode(val value: Int) : ReadAloudPlayerIntent
     data class SetSpeed(val value: Int) : ReadAloudPlayerIntent
     data class SetTimer(val minutes: Int) : ReadAloudPlayerIntent
+    data class SetFinishCurrentChapterAfterTimer(val value: Boolean) : ReadAloudPlayerIntent
+    data class OpenSheet(val sheet: ReadAloudPlayerSheet) : ReadAloudPlayerIntent
+    data object DismissSheet : ReadAloudPlayerIntent
     data class SeekTo(val chapterPosition: Int) : ReadAloudPlayerIntent
 }
 
 sealed interface ReadAloudPlayerEffect {
-    data object OpenToc : ReadAloudPlayerEffect
     data object ReturnToReaderSettings : ReadAloudPlayerEffect
     data object ReturnToClassic : ReadAloudPlayerEffect
 }

@@ -2,6 +2,7 @@ package io.legado.app.ui.book.info
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -12,29 +13,42 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import com.script.rhino.runScriptWithContext
 import io.legado.app.R
+import io.legado.app.constant.AppLog
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.help.book.isAudio
 import io.legado.app.help.book.isImage
 import io.legado.app.help.book.isLocal
 import io.legado.app.model.SourceCallBack
-import io.legado.app.ui.book.audio.AudioPlayActivity
 import io.legado.app.ui.book.info.edit.BookInfoEditActivity
-import io.legado.app.ui.book.manga.ReadMangaActivity
 import io.legado.app.ui.book.toc.TocActivityResult
-import io.legado.app.ui.file.HandleFileContract
+import io.legado.app.ui.login.SourceLoginJsExtensions
+import io.legado.app.ui.widget.components.filePicker.FilePickerSheet
+import io.legado.app.utils.RealPathUtil
 import io.legado.app.utils.StartActivityContract
+import io.legado.app.utils.externalFiles
+import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.openFileUri
 import io.legado.app.utils.sendToClip
+import io.legado.app.utils.takePersistablePermissionSafely
 import io.legado.app.utils.toastOnUi
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import splitties.init.appCtx
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -51,6 +65,8 @@ fun BookInfoRouteScreen(
     onOpenBookSourceEdit: (String) -> Unit,
     onOpenSourceLogin: (String) -> Unit,
     onOpenReader: (bookUrl: String, inBookshelf: Boolean, chapterChanged: Boolean) -> Unit = { _, _, _ -> },
+    onOpenMangaReader: (bookUrl: String, inBookshelf: Boolean, chapterChanged: Boolean) -> Unit = { _, _, _ -> },
+    onOpenAudioPlay: (bookUrl: String, inBookshelf: Boolean) -> Unit = { _, _ -> },
     onNavigateToBookInfo: (name: String?, author: String?, bookUrl: String, origin: String?, coverPath: String?) -> Unit = { _, _, _, _, _ -> },
     onNavigateToExploreShow: (title: String?, sourceUrl: String, exploreUrl: String?) -> Unit = { _, _, _ -> },
     onOpenCharacterDetail: (bookUrl: String, characterId: String?) -> Unit = { _, _ -> },
@@ -67,26 +83,28 @@ fun BookInfoRouteScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val showMangaUi by rememberUpdatedState(uiState.showMangaUi)
+    var showSelectBooksDirSheet by remember { mutableStateOf(false) }
 
     val tocActivityResult = rememberLauncherForActivityResult(TocActivityResult()) {
         viewModel.onTocResult(it)
     }
-    val localBookTreeSelect = rememberLauncherForActivityResult(HandleFileContract()) {
-        it.uri?.let { treeUri ->
-            viewModel.onIntent(BookInfoIntent.SetDefaultBookTreeUri(treeUri.toString()))
+    val localBookTreeSelect =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            if (RealPathUtil.getTreePath(uri)?.startsWith(appCtx.externalFiles.parent!!) == true) {
+                return@rememberLauncherForActivityResult
+            }
+            if (uri.isContentScheme()) {
+                uri.takePersistablePermissionSafely(activity)
+            }
+            viewModel.onIntent(BookInfoIntent.SetDefaultBookTreeUri(uri.toString()))
         }
-    }
     val infoEditResult = rememberLauncherForActivityResult(
         StartActivityContract(BookInfoEditActivity::class.java)
     ) {
         if (it.resultCode == Activity.RESULT_OK) {
             viewModel.onInfoEdited()
         }
-    }
-    val readBookResult = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        viewModel.onReaderResult(it.resultCode)
     }
 
     LaunchedEffect(bookUrl, name, author, origin, coverPath, viewModel) {
@@ -127,29 +145,27 @@ fun BookInfoRouteScreen(
                 }
 
                 is BookInfoEffect.OpenReader -> {
-                    val cls = when {
-                        effect.book.isAudio -> AudioPlayActivity::class.java
-                        !effect.book.isLocal && effect.book.isImage && showMangaUi -> {
-                            ReadMangaActivity::class.java
-                        }
+                    when {
+                        effect.book.isAudio -> onOpenAudioPlay(
+                            effect.book.bookUrl,
+                            effect.inBookshelf
+                        )
 
-                        else -> null
-                    }
-                    if (cls == null) {
+                        !effect.book.isLocal && effect.book.isImage && showMangaUi -> {
+                            onOpenMangaReader(
+                                effect.book.bookUrl,
+                                effect.inBookshelf,
+                                effect.chapterChanged,
+                            )
+                        }
+                        else -> {
                         onOpenReader(
                             effect.book.bookUrl,
                             effect.inBookshelf,
                             effect.chapterChanged,
                         )
-                        return@collectLatest
-                    }
-                    readBookResult.launch(
-                        Intent(activity, cls).apply {
-                            putExtra("bookUrl", effect.book.bookUrl)
-                            putExtra("inBookshelf", effect.inBookshelf)
-                            putExtra("chapterChanged", effect.chapterChanged)
                         }
-                    )
+                    }
                 }
 
                 is BookInfoEffect.OpenToc -> tocActivityResult.launch(effect.bookUrl)
@@ -161,13 +177,15 @@ fun BookInfoRouteScreen(
                     onOpenSourceLogin(effect.sourceUrl)
                 }
 
-                BookInfoEffect.OpenSelectBooksDir -> localBookTreeSelect.launch {
-                    title = activity.getString(R.string.select_book_folder)
-                }
+                BookInfoEffect.OpenSelectBooksDir -> showSelectBooksDirSheet = true
 
                 is BookInfoEffect.OpenFile -> activity.openFileUri(effect.uri, effect.mimeType)
                 is BookInfoEffect.RunSourceCallback -> {
                     runSourceCallback(activity, effect, viewModel, onOpenSearch)
+                }
+
+                is BookInfoEffect.RunIntroJs -> {
+                    runIntroJs(activity, effect)
                 }
 
 
@@ -202,6 +220,15 @@ fun BookInfoRouteScreen(
         }
     }
 
+    FilePickerSheet(
+        show = showSelectBooksDirSheet,
+        onDismissRequest = { showSelectBooksDirSheet = false },
+        title = stringResource(R.string.select_book_folder),
+        onSelectSysDir = {
+            showSelectBooksDirSheet = false
+            localBookTreeSelect.launch(null)
+        },
+    )
     BookInfoScreen(
         state = uiState,
         groups = viewModel.allGroups
@@ -249,6 +276,25 @@ private fun runSourceCallback(
             }
 
             BookInfoCallbackAction.None -> Unit
+        }
+    }
+}
+
+private fun runIntroJs(activity: AppCompatActivity, effect: BookInfoEffect.RunIntroJs) {
+    val source = effect.source ?: return
+    activity.lifecycleScope.launch(IO) {
+        try {
+            val java = SourceLoginJsExtensions(activity, source)
+            runScriptWithContext {
+                source.evalJS(effect.click) {
+                    put("result", null)
+                    put("java", java)
+                    put("book", effect.book)
+                }
+            }
+        } catch (e: Throwable) {
+            AppLog.put("${source.bookSourceName}: ${e.localizedMessage}", e)
+            activity.toastOnUi("${effect.name} click error\n${e.localizedMessage}")
         }
     }
 }

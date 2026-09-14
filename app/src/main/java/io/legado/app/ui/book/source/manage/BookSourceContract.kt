@@ -109,6 +109,15 @@ sealed interface BookSourceIntent {
 }
 
 sealed interface BookSourceEffect {
+    data class StartCheck(
+        val ids: Set<String>,
+        val keyword: String,
+    ) : BookSourceEffect
+
+    data object CancelCheck : BookSourceEffect
+
+    data object ImportFinished : BookSourceEffect
+
     data class ShowSnackbar(
         val message: String,
         val actionLabel: String? = null,

@@ -9,6 +9,7 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookContentProcess
 import io.legado.app.domain.gateway.AiArtifactGateway
 import io.legado.app.domain.gateway.AiPromptPresetGateway
+import io.legado.app.domain.model.AiReasoningLevel
 import io.legado.app.domain.model.AiTaskType
 import io.legado.app.domain.usecase.AiTextFactoryUseCase
 import io.legado.app.domain.usecase.CleanSelectedTextUseCase
@@ -32,8 +33,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Date
-import java.util.UUID
-import kotlin.coroutines.coroutineContext
+import kotlin.uuid.Uuid
 
 /**
  * 阅读页 AI 域：章节摘要、划词净化、划词重写、重写预设配置。
@@ -190,6 +190,7 @@ class ReadAiDelegate(
                         book = book,
                         bookChapter = chapter,
                         contentOverride = content,
+                        reasoningLevel = _uiState.value.chapterSummary.reasoningLevel,
                     )
                 }
                 generateChapterSummaryUseCase.observeTask(bookUrl, chapterIndex).collect { task ->
@@ -278,6 +279,10 @@ class ReadAiDelegate(
         }
     }
 
+    fun setChapterSummaryReasoningLevel(level: AiReasoningLevel) {
+        _uiState.update { it.copy(chapterSummary = it.chapterSummary.copy(reasoningLevel = level)) }
+    }
+
     // --- 划词净化 ---
 
     fun openAiTextClean(
@@ -295,7 +300,9 @@ class ReadAiDelegate(
             return
         }
         val chapterTitle = host.chapterName
-        val visibleContent = ReadBook.curTextChapter?.getContent().orEmpty()
+        val visibleContent = ReadBook.readerChapterInputWindow.current
+            ?.takeIf { it.chapter.index == chapterIndex }
+            ?.source?.semanticContent.orEmpty()
         val (contextBefore, contextAfter) = buildSelectionContext(
             content = visibleContent,
             selectedText = text,
@@ -356,6 +363,7 @@ class ReadAiDelegate(
                         selectedText = request.originalText,
                         contextBefore = request.contextBefore,
                         contextAfter = request.contextAfter,
+                        reasoningLevel = _uiState.value.aiTextClean.reasoningLevel,
                     )
                 }
                 cleanSelectedTextUseCase.observeTaskById(taskId).collect { task ->
@@ -493,11 +501,15 @@ class ReadAiDelegate(
         }
     }
 
+    fun setAiTextCleanReasoningLevel(level: AiReasoningLevel) {
+        _uiState.update { it.copy(aiTextClean = it.aiTextClean.copy(reasoningLevel = level)) }
+    }
+
     // --- 划词重写 ---
 
     fun openAiCurrentChapterRewrite() {
         val book = ReadBook.book ?: return
-        val chapter = ReadBook.curTextChapter?.chapter ?: return
+        val chapter = ReadBook.readerChapterInputWindow.current?.chapter ?: return
         scope.launch {
             val text = withContext(IO) {
                 getEffectiveChapterContent(book, chapter).trim()
@@ -526,7 +538,9 @@ class ReadAiDelegate(
         val book = ReadBook.book ?: return
         val chapterTitle = host.findChapter(book.bookUrl, chapterIndex)?.title
             ?: host.chapterName
-        val visibleContent = ReadBook.curTextChapter?.getContent().orEmpty()
+        val visibleContent = ReadBook.readerChapterInputWindow.current
+            ?.takeIf { it.chapter.index == chapterIndex }
+            ?.source?.semanticContent.orEmpty()
         val (contextBefore, contextAfter) = buildSelectionContext(
             content = visibleContent,
             selectedText = text,
@@ -715,6 +729,10 @@ class ReadAiDelegate(
         generateSelectedAiTextRewrite()
     }
 
+    fun setAiTextRewriteReasoningLevel(level: AiReasoningLevel) {
+        _uiState.update { it.copy(aiTextRewrite = it.aiTextRewrite.copy(reasoningLevel = level)) }
+    }
+
     private fun generateAiTextRewrite(
         request: PendingAiTextRewriteRequest,
         preset: AiRewritePresetUi,
@@ -749,6 +767,7 @@ class ReadAiDelegate(
                         referenceText = referenceContext.text,
                         skipCache = true,
                         artifactContentHash = request.sourceContentHash,
+                    reasoningLevel = _uiState.value.aiTextRewrite.reasoningLevel,
                     )
                 val taskId = withContext(IO) { aiTextFactoryUseCase.start(aiRequest) }
                 aiTextFactoryUseCase.observeTaskById(taskId).collect { task ->
@@ -994,7 +1013,7 @@ class ReadAiDelegate(
         val editingId = config.editingPresetId
         val savedPresets = if (editingId == null) {
             config.presets + AiRewritePresetUi(
-                id = UUID.randomUUID().toString(),
+                id = Uuid.random().toString(),
                 name = name,
                 instruction = instruction,
             )

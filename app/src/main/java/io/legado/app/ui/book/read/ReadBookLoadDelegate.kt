@@ -1,7 +1,6 @@
 package io.legado.app.ui.book.read
 
 import android.content.Context
-import android.content.Intent
 import io.legado.app.R
 import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
@@ -26,6 +25,7 @@ import io.legado.app.fanqie.FanqieConfig
 import io.legado.app.fanqie.FanqieProgressSyncer
 import io.legado.app.fanqie.FanqieShelfRepository
 import io.legado.app.fanqie.FanqieSyncResult
+import io.legado.app.feature.reader.platform.ReaderPerfTrace
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalModified
@@ -49,17 +49,18 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onEmpty
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
 import kotlin.coroutines.coroutineContext
 
 /**
  * 开书 / 目录加载 / 换源 / 进度同步域（R2.2 续批）。
  *
- * 从 intent 解析出书，装载目录与正文，处理本地文件缺失、换源（手动与自动）、
+ * 从导航请求解析出书，装载目录与正文，处理本地文件缺失、换源（手动与自动）、
  * 以及与云端阅读进度的双向同步。
  *
- * **无自持状态**：唯一的状态是 `isInitFinish`（ReadView 首帧靠它放行前后章排版，
- * 见 `prepareCachedChapterFallback` 的说明），必须留在 [ReadBookUiState]。
+ * **无自持状态**：唯一的状态是 `isInitFinish`（Compose 阅读路由用它表达开书初始化完成），
+ * 必须留在 [ReadBookUiState]。
  * 故与 [ReadConfigUpdateDelegate] 同形，读写经 [Host]。
  */
 class ReadBookLoadDelegate(
@@ -95,41 +96,50 @@ class ReadBookLoadDelegate(
         suspend fun syncReadPreferencesSnapshot()
 
         fun openChapter(index: Int, durChapterPos: Int)
+
+        suspend fun checkReadRecordAlias(book: Book)
     }
 
     private var changeSourceCoroutine: Coroutine<*>? = null
 
-    suspend fun initReadBookConfig(intent: Intent) {
-        val bookUrl = intent.getStringExtra("bookUrl")
+    suspend fun initReadBookConfig(request: ReadBookInitRequest): Book? = withContext(Dispatchers.IO) {
+        val bookUrl = request.bookUrl
         val book = when {
             bookUrl.isNullOrEmpty() -> bookRepository.getLastReadBook()
             else -> bookRepository.getBook(bookUrl)
-        } ?: return
+        } ?: return@withContext null
         ReadBook.upReadBookConfig(book)
+        book
     }
 
-    fun initData(intent: Intent, success: (() -> Unit)? = null) {
+    fun initData(
+        request: ReadBookInitRequest,
+        initialBook: Book? = null,
+        success: (() -> Unit)? = null,
+    ) {
         Coroutine.async(scope, Dispatchers.IO) {
-            host.syncReadPreferencesSnapshot()
-            ReadBook.inBookshelf = intent.getBooleanExtra("inBookshelf", true)
-            ReadBook.chapterChanged = intent.getBooleanExtra("chapterChanged", false)
-            val bookUrl = intent.getStringExtra("bookUrl")
-            val book = when {
-                bookUrl.isNullOrEmpty() -> bookRepository.getLastReadBook()
-                else -> bookRepository.getBook(bookUrl)
-            } ?: ReadBook.book
-            when {
-                book != null -> initBook(book)
-                else -> {
-                    ReadBook.upMsg(context.getString(R.string.no_book))
-                    AppLog.put("未找到书籍\nbookUrl:$bookUrl")
+            ReaderPerfTrace.suspendSection("open.init") {
+                host.syncReadPreferencesSnapshot()
+                ReadBook.inBookshelf = request.inBookshelf
+                ReadBook.chapterChanged = request.chapterChanged
+                val bookUrl = request.bookUrl
+                val book = initialBook ?: when {
+                    bookUrl.isNullOrEmpty() -> bookRepository.getLastReadBook()
+                    else -> bookRepository.getBook(bookUrl)
+                } ?: ReadBook.book
+                when {
+                    book != null -> initBook(book)
+                    else -> {
+                        ReadBook.upMsg(context.getString(R.string.no_book))
+                        AppLog.put("未找到书籍\nbookUrl:$bookUrl")
+                    }
                 }
-            }
-            val index = intent.getIntExtra("index", -1)
-            val chapterPos = intent.getIntExtra("chapterPos", -1)
-            if (index >= 0 && chapterPos >= 0) {
-                ReadBook.saveCurrentBookProgress()
-                host.openChapter(index, chapterPos)
+                val index = request.chapterIndex
+                val chapterPos = request.chapterPos
+                if (index >= 0 && chapterPos >= 0) {
+                    ReadBook.saveCurrentBookProgress()
+                    host.openChapter(index, chapterPos)
+                }
             }
         }.onSuccess {
             success?.invoke()
@@ -143,7 +153,7 @@ class ReadBookLoadDelegate(
     }
 
     /** 换书/重装目录后重走开书流程。VM 的「模拟阅读切换」和目录权限回来后也调它。 */
-    suspend fun initBook(book: Book) {
+    suspend fun initBook(book: Book) = ReaderPerfTrace.suspendSection("open.book") {
         val isSameBook = ReadBook.book?.bookUrl == book.bookUrl
         if (isSameBook) {
             ReadBook.upData(book)
@@ -152,24 +162,25 @@ class ReadBookLoadDelegate(
         }
         host.setInitFinish()
         if (!book.isLocal && book.tocUrl.isEmpty() && !loadBookInfo(book)) {
-            return
+            return@suspendSection
         }
         if (book.isLocal && !checkLocalBookFileExist(book)) {
-            return
+            return@suspendSection
         }
         if ((ReadBook.chapterSize == 0 || book.isLocalModified()) && !loadChapterListAwait(book)) {
-            return
+            return@suspendSection
         }
         ReadBook.upMsg(null)
+        host.checkReadRecordAlias(book)
 
         if (!isSameBook) {
-            ReadBook.loadContent(resetPageOffset = true) {
+            ReadBook.loadInitialContent(resetPageOffset = true) {
                 ReadBook.bookSource?.let {
                     SourceCallBack.callBackBook(
                         SourceCallBack.START_READ,
                         it,
                         book,
-                        ReadBook.curTextChapter?.chapter
+                        ReadBook.readerChapterInputWindow.current?.chapter
                     )
                 }
             }
@@ -180,7 +191,7 @@ class ReadBookLoadDelegate(
                         SourceCallBack.START_READ,
                         it,
                         book,
-                        ReadBook.curTextChapter?.chapter
+                        ReadBook.readerChapterInputWindow.current?.chapter
                     )
                 }
             }
@@ -196,7 +207,7 @@ class ReadBookLoadDelegate(
         }
         if (!book.isLocal && ReadBook.bookSource == null) {
             autoChangeSource(book.name, book.author)
-            return
+            return@suspendSection
         }
         syncFanqieProgressIfApplicable(book)
     }

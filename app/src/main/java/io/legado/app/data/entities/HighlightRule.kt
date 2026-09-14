@@ -1,13 +1,14 @@
 package io.legado.app.data.entities
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 @Entity(tableName = "highlightRules")
 data class HighlightRule(
     @PrimaryKey
-    var id: String = UUID.randomUUID().toString(),
+    var id: String = Uuid.random().toString(),
     var name: String = "",
     var pattern: String = "",
     var sampleText: String = "",
@@ -33,6 +34,8 @@ data class HighlightRule(
     var npRight: Float = 0.1f,
     var npTop: Float = 0.1f,
     var npBottom: Float = 0.1f,
+    @ColumnInfo(defaultValue = "1")
+    var manualNineSlice: Boolean = true,
 ) {
 
     fun styleSummary(): String {
@@ -97,7 +100,7 @@ data class HighlightRule(
     }
 
     fun copyWithNewId(): HighlightRule {
-        return copy(id = UUID.randomUUID().toString())
+        return copy(id = Uuid.random().toString())
     }
 
     companion object {

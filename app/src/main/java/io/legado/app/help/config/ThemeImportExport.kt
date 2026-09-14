@@ -10,7 +10,7 @@ import io.legado.app.utils.GSON
 import splitties.init.appCtx
 import java.io.File
 import java.io.FileOutputStream
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 /**
  * 轻量级主题导入导出系统
@@ -39,6 +39,11 @@ object ThemeImportExport {
             "navIconExplore" to data.navIconExplore,
             "navIconRss" to data.navIconRss,
             "navIconMy" to data.navIconMy,
+            "navIconHomeSelected" to data.navIconHomeSelected,
+            "navIconBookshelfSelected" to data.navIconBookshelfSelected,
+            "navIconExploreSelected" to data.navIconExploreSelected,
+            "navIconRssSelected" to data.navIconRssSelected,
+            "navIconMySelected" to data.navIconMySelected,
             "appFontPath" to data.appFontPath,
         )
 
@@ -129,6 +134,16 @@ object ThemeImportExport {
                 navIconExplore = embeddedAssets.paths["navIconExplore"] ?: data.navIconExplore,
                 navIconRss = embeddedAssets.paths["navIconRss"] ?: data.navIconRss,
                 navIconMy = embeddedAssets.paths["navIconMy"] ?: data.navIconMy,
+                navIconHomeSelected = embeddedAssets.paths["navIconHomeSelected"]
+                    ?: data.navIconHomeSelected,
+                navIconBookshelfSelected = embeddedAssets.paths["navIconBookshelfSelected"]
+                    ?: data.navIconBookshelfSelected,
+                navIconExploreSelected = embeddedAssets.paths["navIconExploreSelected"]
+                    ?: data.navIconExploreSelected,
+                navIconRssSelected = embeddedAssets.paths["navIconRssSelected"]
+                    ?: data.navIconRssSelected,
+                navIconMySelected = embeddedAssets.paths["navIconMySelected"]
+                    ?: data.navIconMySelected,
                 appFontPath = embeddedAssets.paths["appFontPath"] ?: data.appFontPath,
                 coverDefaultImage = appliedAssets.lightCoverPaths.joinToString(","),
                 coverDefaultImageDark = appliedAssets.darkCoverPaths.joinToString(","),
@@ -156,14 +171,14 @@ object ThemeImportExport {
                         val baseDir = appCtx.getExternalFilesDir(null) ?: appCtx.filesDir
                         val folder = File(baseDir, key)
                         folder.mkdirs()
-                        File(folder, "theme_asset_${UUID.randomUUID()}.jpg")
+                        File(folder, "theme_asset_${Uuid.random()}.jpg")
                     }
 
                     key.contains("ContainerBackgroundImage") -> {
                         val baseDir = appCtx.getExternalFilesDir(null) ?: appCtx.filesDir
                         val folder = File(baseDir, "container_background/$key")
                         folder.mkdirs()
-                        File(folder, "theme_asset_${UUID.randomUUID()}.png")
+                        File(folder, "theme_asset_${Uuid.random()}.png")
                     }
 
                     key.startsWith("navIcon") -> {
@@ -171,21 +186,21 @@ object ThemeImportExport {
                         folder.mkdirs()
                         File(
                             folder,
-                            "theme_${key.removePrefix("navIcon").lowercase()}_${UUID.randomUUID()}.png",
+                            "theme_${key.removePrefix("navIcon").lowercase()}_${Uuid.random()}.png",
                         )
                     }
 
                     key == "appFontPath" -> {
                         val folder = File(appCtx.filesDir, "fonts")
                         folder.mkdirs()
-                        File(folder, "theme_font_${UUID.randomUUID()}.ttf")
+                        File(folder, "theme_font_${Uuid.random()}.ttf")
                     }
 
                     key.startsWith("coverDefaultImage") -> {
                         val baseDir = appCtx.getExternalFilesDir(null) ?: appCtx.filesDir
                         val folder = File(baseDir, "covers")
                         folder.mkdirs()
-                        File(folder, "${key}_${UUID.randomUUID()}.jpg")
+                        File(folder, "${key}_${Uuid.random()}.jpg")
                     }
 
                     else -> null

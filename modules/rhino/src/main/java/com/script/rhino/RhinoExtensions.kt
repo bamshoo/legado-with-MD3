@@ -40,6 +40,7 @@ inline fun <T> suspendContinuation(crossinline block: suspend CoroutineScope.() 
 }
 
 inline fun <T> runScriptWithContext(context: CoroutineContext, block: () -> T): T {
+    @Suppress("UNUSED_EXPRESSION")
     RhinoScriptEngine
     val rhinoContext = Context.enter() as RhinoContext
     val previousCoroutineContext = rhinoContext.coroutineContext

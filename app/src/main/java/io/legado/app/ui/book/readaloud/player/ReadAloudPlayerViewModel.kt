@@ -6,7 +6,10 @@ import io.legado.app.constant.PreferKey
 import io.legado.app.constant.ReadAloudBgMode
 import io.legado.app.help.config.AppConfigStore
 import io.legado.app.help.config.compatDsInt
+import io.legado.app.ui.widget.components.player.PlayerChapterUi
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
@@ -17,15 +20,18 @@ class ReadAloudPlayerViewModel(
     private val coordinator: ReadAloudPlayerCoordinator,
 ) : ViewModel() {
 
+    private val activeSheet = MutableStateFlow<ReadAloudPlayerSheet?>(null)
+
     val uiState = combine(
         coordinator.state,
         AppConfigStore.observeInt(PreferKey.readAloudPlayerBgMode),
-    ) { source, bgMode ->
-        toUiState(source, bgMode ?: ReadAloudBgMode.Blur)
+        activeSheet,
+    ) { source, bgMode, sheet ->
+        toUiState(source, bgMode ?: ReadAloudBgMode.Blur, sheet)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
-        initialValue = toUiState(coordinator.snapshot(), readBgMode()),
+        initialValue = toUiState(coordinator.snapshot(), readBgMode(), null),
     )
 
     private val _effects = MutableSharedFlow<ReadAloudPlayerEffect>(extraBufferCapacity = 8)
@@ -41,7 +47,8 @@ class ReadAloudPlayerViewModel(
             ReadAloudPlayerIntent.NextChapter -> coordinator.nextChapter()
             ReadAloudPlayerIntent.OpenSettings -> effect(ReadAloudPlayerEffect.ReturnToReaderSettings)
             ReadAloudPlayerIntent.SwitchToClassic -> effect(ReadAloudPlayerEffect.ReturnToClassic)
-            ReadAloudPlayerIntent.OpenToc -> effect(ReadAloudPlayerEffect.OpenToc)
+            ReadAloudPlayerIntent.CycleBgMode -> cycleBgMode()
+            is ReadAloudPlayerIntent.SelectChapter -> coordinator.selectChapter(intent.index)
             is ReadAloudPlayerIntent.SetBgMode -> AppConfigStore.putInt(
                 PreferKey.readAloudPlayerBgMode,
                 intent.value,
@@ -49,7 +56,15 @@ class ReadAloudPlayerViewModel(
             is ReadAloudPlayerIntent.SetSpeed -> viewModelScope.launch {
                 coordinator.setSpeed(intent.value)
             }
-            is ReadAloudPlayerIntent.SetTimer -> coordinator.setTimer(intent.minutes)
+            is ReadAloudPlayerIntent.SetTimer -> viewModelScope.launch {
+                coordinator.setTimer(intent.minutes)
+            }
+            is ReadAloudPlayerIntent.SetFinishCurrentChapterAfterTimer ->
+                viewModelScope.launch {
+                    coordinator.setFinishCurrentChapterAfterTimer(intent.value)
+                }
+            is ReadAloudPlayerIntent.OpenSheet -> activeSheet.value = intent.sheet
+            ReadAloudPlayerIntent.DismissSheet -> activeSheet.value = null
             is ReadAloudPlayerIntent.SeekTo -> coordinator.seekTo(
                 chapterPosition = intent.chapterPosition,
                 chapterLength = uiState.value.chapterLength,
@@ -57,13 +72,32 @@ class ReadAloudPlayerViewModel(
         }
     }
 
+    private fun cycleBgMode() {
+        val next = when (readBgMode()) {
+            ReadAloudBgMode.Solid -> ReadAloudBgMode.Blur
+            ReadAloudBgMode.Blur -> ReadAloudBgMode.FlowingLight
+            ReadAloudBgMode.FlowingLight -> ReadAloudBgMode.Transparent
+            else -> ReadAloudBgMode.Solid
+        }
+        AppConfigStore.putInt(PreferKey.readAloudPlayerBgMode, next)
+    }
+
     private fun toUiState(
         source: ReadAloudPlayerSourceState,
         bgMode: Int,
+        sheet: ReadAloudPlayerSheet?,
     ): ReadAloudPlayerUiState {
         val activeIndex = source.textLines.indexOfLast {
             it.chapterPosition <= source.chapterPosition
         }
+        val chapters = source.chapters.map { chapter ->
+            PlayerChapterUi(
+                index = chapter.index,
+                title = chapter.title,
+                isVolume = chapter.isVolume,
+                tocLevel = chapter.tocLevel,
+            )
+        }.toImmutableList()
         return ReadAloudPlayerUiState(
             bookUrl = source.bookUrl,
             bookName = source.bookName,
@@ -72,6 +106,7 @@ class ReadAloudPlayerViewModel(
             sourceOrigin = source.sourceOrigin,
             chapterIndex = source.chapterIndex,
             chapterTitle = source.chapterTitle,
+            chapters = chapters,
             chapterText = source.chapterText,
             textLines = source.textLines,
             activeTextLine = activeIndex,
@@ -84,7 +119,9 @@ class ReadAloudPlayerViewModel(
             isPaused = source.isPaused,
             speed = source.speed,
             timerMinutes = source.timerMinutes,
+            finishCurrentChapterAfterTimer = source.finishCurrentChapterAfterTimer,
             bgMode = bgMode,
+            activeSheet = sheet,
         )
     }
 
@@ -96,4 +133,5 @@ class ReadAloudPlayerViewModel(
         return AppConfigStore.preferences.compatDsInt(PreferKey.readAloudPlayerBgMode)
             ?: ReadAloudBgMode.Blur
     }
+
 }

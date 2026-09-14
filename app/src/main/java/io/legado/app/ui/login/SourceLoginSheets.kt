@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,11 +38,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import io.legado.app.R
 import io.legado.app.constant.AppConst
 import io.legado.app.data.entities.rule.ExploreKind
 import io.legado.app.ui.about.MarkdownSheet
+import io.legado.app.ui.rss.read.VisibleWebViewCompose
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.AppTextField
@@ -246,7 +245,7 @@ private fun SourceLoginRow(
 
 private fun LoginRowLayoutUi.textAlign(): TextAlign = when (justify) {
     "flex_start" -> TextAlign.Start
-    "flex_end", "right" -> TextAlign.End
+    "flex_end" -> TextAlign.End
     else -> TextAlign.Center
 }
 
@@ -275,7 +274,7 @@ private fun SourceLoginWebSheet(
     onOpenExternalUrl: (String) -> Unit,
 ) {
     AppModalBottomSheet(
-        show = true,
+        show = state.mode == SourceLoginMode.Web && !state.loading,
         onDismissRequest = { onIntent(SourceLoginIntent.Back) },
         title = state.title,
         endAction = {
@@ -286,8 +285,19 @@ private fun SourceLoginWebSheet(
             )
         },
         contentPaddingEnabled = false,
+        sheetGesturesEnabled = false,
     ) {
-        SourceLoginWebView(state, onIntent, onOpenExternalUrl)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 520.dp)
+        ) {
+            SourceLoginWebView(
+                state = state,
+                onIntent = onIntent,
+                onOpenExternalUrl = onOpenExternalUrl,
+            )
+        }
     }
 }
 
@@ -301,13 +311,11 @@ private fun SourceLoginWebView(
     val currentIntent by rememberUpdatedState(onIntent)
     val currentOpenExternalUrl by rememberUpdatedState(onOpenExternalUrl)
     var webView by remember { mutableStateOf<WebView?>(null) }
-    Box(Modifier
-        .fillMaxWidth()
-        .heightIn(min = 520.dp)) {
-        AndroidView(
+    Box(Modifier.fillMaxSize()) {
+        VisibleWebViewCompose(
             modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                WebView(context).apply {
+            onCreated = { createdWebView ->
+                createdWebView.apply {
                     settings.apply {
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                         domStorageEnabled = true
@@ -358,7 +366,6 @@ private fun SourceLoginWebView(
                     webView = this
                 }
             },
-            update = {},
         )
         if (state.webProgress in 0..99) {
             LinearProgressIndicator(
@@ -368,13 +375,10 @@ private fun SourceLoginWebView(
                     .align(Alignment.TopCenter),
             )
         }
-    }
-    DisposableEffect(Unit) {
-        onDispose { webView?.destroy() }
-    }
-    LaunchedEffect(state.checkingCookie) {
-        if (state.checkingCookie) {
-            state.webUrl?.let { webView?.loadUrl(it, state.headers) }
+        LaunchedEffect(state.checkingCookie) {
+            if (state.checkingCookie) {
+                state.webUrl?.let { webView?.loadUrl(it, state.headers) }
+            }
         }
     }
 }

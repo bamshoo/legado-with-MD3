@@ -11,10 +11,10 @@ import io.legado.app.data.repository.ReadSettingsRepository
 import io.legado.app.domain.gateway.AiProfileGateway
 import io.legado.app.domain.model.AiTaskType
 import io.legado.app.domain.model.PlaybackTimer
-import io.legado.app.domain.model.settings.ReadAloudSettings
 import io.legado.app.domain.model.readaloud.ReadAloudSessionStatus
 import io.legado.app.domain.model.readaloud.ReadAloudVoice
 import io.legado.app.domain.model.readaloud.VoiceCatalogEntry
+import io.legado.app.domain.model.settings.ReadAloudSettings
 import io.legado.app.domain.usecase.SyncReadAloudVoicesUseCase
 import io.legado.app.model.ReadAloud
 import io.legado.app.model.ReadAloudSessionStore
@@ -86,11 +86,15 @@ class ReadAloudDelegate(
                         readAloudCapsuleOffsetY = prefs.capsuleOffsetY,
                         readAloudMediaButtonPerNext = prefs.mediaButtonPerNext,
                         readAloudByPage = prefs.readAloudByPage,
-                        readAloudSystemMediaCompat = prefs.systemMediaControlCompatibilityChange,
+                        readAloudSystemMediaCompat =
+                            prefs.systemMediaControlCompatibilityChange,
+                        readAloudAndroidMediaControl = prefs.androidMediaControlEnabled,
                         readAloudStreamAudio = prefs.streamReadAloudAudio,
                         readAloudTtsFollowSys = prefs.ttsFollowSys,
                         readAloudTtsSpeechRate = prefs.ttsSpeechRate,
                         readAloudTtsTimer = prefs.ttsTimer,
+                        readAloudFinishCurrentChapterAfterTimer =
+                            prefs.finishCurrentChapterAfterTimer,
                         speechAnalysisMode = prefs.speechAnalysisMode,
                         useMultiSpeaker = prefs.useMultiSpeaker,
                         defaultReadAloudInterface = prefs.defaultInterface,
@@ -162,9 +166,35 @@ class ReadAloudDelegate(
 
     fun nextParagraph() = ReadAloud.nextParagraph(context)
 
-    fun prevChapter() = ReadBook.moveToPrevChapter(upContent = true, toLast = false)
+    /** 朗读面板换章：朗读驱动的章节移动，页面跟随朗读，不视为手动脱离。 */
+    fun prevChapter() = BaseReadAloudService.withSpeechNavigation {
+        ReadBook.moveToPrevChapter(upContent = true, toLast = false)
+    }
 
-    fun nextChapter() = ReadBook.moveToNextChapter(true)
+    fun nextChapter() = BaseReadAloudService.withSpeechNavigation {
+        ReadBook.moveToNextChapter(true)
+    }
+
+    /** 回到朗读位置：恢复页面跟随朗读，并跳到朗读所在章节/字符位置。全程不打断当前朗读。 */
+    fun backToSpeakingPosition() {
+        readAloudSessionStore.restoreReadAloudFollow()
+        val speakingChapterIndex = BaseReadAloudService.currentChapterIndex
+        val speakingChapterStart = BaseReadAloudService.currentProgress
+        if (speakingChapterIndex < 0) return
+        // currentProgress 为正在朗读的精确章内位置（onRangeStart 段内偏移上报），整段高亮落在当前段
+        val chapterStart = speakingChapterStart.coerceAtLeast(0)
+        if (speakingChapterIndex != ReadBook.durChapterIndex) {
+            // 跳到朗读位置属于朗读相关的页面移动，不能触发手动脱离
+            BaseReadAloudService.withSpeechNavigation {
+                ReadBook.openChapter(speakingChapterIndex, chapterStart) {
+                    ReadBook.upTextChapterAloudSpan(chapterStart)
+                }
+            }
+        } else {
+            ReadBook.syncReadAloudPage(speakingChapterIndex, chapterStart)
+            ReadBook.upTextChapterAloudSpan(chapterStart)
+        }
+    }
 
     // --- 界面入口 ---
 
@@ -324,6 +354,9 @@ class ReadAloudDelegate(
     fun setSystemMediaCompat(value: Boolean) =
         updateSettings { it.copy(systemMediaControlCompatibilityChange = value) }
 
+    fun setAndroidMediaControl(value: Boolean) =
+        updateSettings { it.copy(androidMediaControlEnabled = value) }
+
     fun setByPage(value: Boolean) {
         updateSettings { it.copy(readAloudByPage = value) }
         if (value) postEvent(EventBus.MEDIA_BUTTON, false)
@@ -354,6 +387,11 @@ class ReadAloudDelegate(
         ReadAloud.setTimer(context, timer)
         updateSettings { it.copy(ttsTimer = timer) }
         host.updateState { it.copy(readAloudTtsTimer = timer) }
+    }
+
+    fun setFinishCurrentChapterAfterTimer(value: Boolean) {
+        updateSettings { it.copy(finishCurrentChapterAfterTimer = value) }
+        host.updateState { it.copy(readAloudFinishCurrentChapterAfterTimer = value) }
     }
 
     fun setTtsSpeechRate(value: Int) {
@@ -403,13 +441,10 @@ class ReadAloudDelegate(
         scope.launch {
             val shouldRestart = BaseReadAloudService.isRun
             val resumePlaying = shouldRestart && !BaseReadAloudService.pause
-            val chapter = ReadBook.curTextChapter
             val chapterPosition = readAloudSessionStore.state.value.playback.chapterPosition
             readAloudSettingsRepository.update { it.copy(useMultiSpeaker = value) }
             host.updateState { it.copy(useMultiSpeaker = value) }
-            if (shouldRestart && chapter != null) {
-                val pageIndex = chapter.getPageIndexByCharIndex(chapterPosition)
-                val startPos = chapterPosition - chapter.getReadLength(pageIndex)
+            if (shouldRestart && ReadBook.readerChapterInputWindow.current != null) {
                 ReadAloud.stop(context)
                 val stopped = withTimeoutOrNull(2_000) {
                     readAloudSessionStore.state.first {
@@ -421,8 +456,7 @@ class ReadAloudDelegate(
                 ReadAloud.play(
                     context = context,
                     play = resumePlaying,
-                    pageIndex = pageIndex,
-                    startPos = startPos.coerceAtLeast(0),
+                    chapterPosition = chapterPosition.coerceAtLeast(0),
                 )
             }
         }

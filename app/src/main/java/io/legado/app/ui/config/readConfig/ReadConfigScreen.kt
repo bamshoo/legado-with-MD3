@@ -305,6 +305,20 @@ fun ReadConfigScreen(
                     }
                 )
 
+                SliderSettingItem(
+                    title = stringResource(R.string.no_toc_split_length_title),
+                    description = stringResource(
+                        R.string.no_toc_split_length_summary,
+                        settings.maxLengthWithNoToc
+                    ),
+                    value = settings.maxLengthWithNoToc.toFloat(),
+                    defaultValue = 3000f,
+                    valueRange = 3000f..100000f,
+                    onValueChange = {
+                        onIntent(ReadConfigIntent.MaxLengthWithNoTocChanged(it.toInt()))
+                    }
+                )
+
                 SwitchSettingItem(
                     title = stringResource(R.string.enable_select_vibrator),
                     checked = settings.selectVibrator,
@@ -327,6 +341,24 @@ fun ReadConfigScreen(
                     checked = settings.autoSuggestDayNight,
                     onCheckedChange = {
                         onIntent(ReadConfigIntent.AutoSuggestDayNightChanged(it))
+                    }
+                )
+
+                SwitchSettingItem(
+                    title = stringResource(R.string.reading_anchor),
+                    description = stringResource(R.string.reading_anchor_summary),
+                    checked = settings.readingAnchorEnabled,
+                    onCheckedChange = {
+                        onIntent(ReadConfigIntent.ReadingAnchorChanged(it))
+                    }
+                )
+
+                SwitchSettingItem(
+                    title = stringResource(R.string.read_aloud_detach_reminder),
+                    description = stringResource(R.string.read_aloud_detach_reminder_summary),
+                    checked = settings.readAloudDetachReminderEnabled,
+                    onCheckedChange = {
+                        onIntent(ReadConfigIntent.ReadAloudDetachReminderChanged(it))
                     }
                 )
 

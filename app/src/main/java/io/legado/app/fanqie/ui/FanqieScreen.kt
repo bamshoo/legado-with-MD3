@@ -1,8 +1,5 @@
 package io.legado.app.fanqie.ui
 
-import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +26,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,9 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import io.legado.app.fanqie.FanqieConstants
-import io.legado.app.ui.browser.WebViewActivity
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.alert.AppAlertDialog
 import io.legado.app.ui.widget.components.card.NormalCard
@@ -55,6 +55,7 @@ import io.legado.app.utils.toastOnUi
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 
@@ -65,26 +66,24 @@ fun FanqieScreen(
     onIntent: (FanqieIntent) -> Unit,
     effects: Flow<FanqieEffect>,
     onBack: () -> Unit,
+    onOpenWebView: (title: String?, url: String) -> Unit,
 ) {
     val context = LocalContext.current
-    val loginLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        onIntent(FanqieIntent.LoginCompleted)
+    var loginPending by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(loginPending) {
+        if (loginPending) {
+            delay(150)
+            loginPending = false
+            onIntent(FanqieIntent.LoginCompleted)
+        }
     }
 
     LaunchedEffect(Unit) {
         effects.collectLatest { effect ->
             when (effect) {
                 is FanqieEffect.OpenLogin -> {
-                    loginLauncher.launch(
-                        Intent(context, WebViewActivity::class.java).apply {
-                            putExtra("title", "番茄小说登录")
-                            putExtra("url", effect.url)
-                            putExtra("sourceOrigin", FanqieConstants.BASE_URL)
-                            putExtra("sourceName", FanqieConstants.ORIGIN_NAME)
-                        }
-                    )
+                    loginPending = true
+                    onOpenWebView("番茄小说登录", effect.url)
                 }
 
                 is FanqieEffect.ShowToast -> context.toastOnUi(effect.message)

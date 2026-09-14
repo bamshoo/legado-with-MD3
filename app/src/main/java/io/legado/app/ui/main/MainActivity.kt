@@ -49,22 +49,24 @@ import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.help.storage.Backup
 import io.legado.app.help.update.AppUpdateGitHub
 import io.legado.app.lib.dialogs.alert
+import io.legado.app.model.AudioPlay
 import io.legado.app.service.WebService
-import io.legado.app.ui.about.CrashLogsDialog
+import io.legado.app.ui.about.MarkdownSheet
 import io.legado.app.ui.about.UpdateDialog
+import io.legado.app.ui.book.audio.AudioPlayViewModel
 import io.legado.app.ui.book.read.ReadBookInputHandler
 import io.legado.app.ui.book.read.ReadBookRouteHost
 import io.legado.app.ui.book.read.page.entities.PageDirection
 import io.legado.app.domain.model.settings.isEInkMode
 import io.legado.app.ui.theme.LocalAppUiConfiguration
 import io.legado.app.ui.welcome.WelcomeActivity
-import io.legado.app.ui.widget.dialog.TextDialog
 import io.legado.app.utils.LogUtils
 import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.startActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -77,7 +79,22 @@ import kotlin.coroutines.suspendCoroutine
 /**
  * 主界面
  */
-open class MainActivity : BaseComposeActivity() {
+open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
+
+    private data class RouteEvent(
+        val route: NavKey,
+        val resetToHome: Boolean,
+    )
+
+    /** 当前激活的有声书播放器 ViewModel（由有声书路由在生命周期内设置/清理） */
+    internal var activeAudioPlayViewModel: AudioPlayViewModel? = null
+
+    /** 全局 Compose 文本弹层状态，供遗留命令式路径展示 Markdown/文本内容 */
+    private val textSheetFlow = MutableStateFlow<TextSheetData?>(null)
+
+    fun showTextSheet(title: String, content: String, onDismiss: (() -> Unit)? = null) {
+        textSheetFlow.value = TextSheetData(title, content, onDismiss)
+    }
 
     companion object {
         private const val KEY_RESTORE_READ_ROUTE = "restoreReadRoute"
@@ -90,6 +107,12 @@ open class MainActivity : BaseComposeActivity() {
         @Volatile
         var hasActiveReadBookRoute: Boolean = false
 
+        @Volatile
+        var hasActiveAudioPlayRoute: Boolean = false
+
+        @Volatile
+        var hasActiveSourceLoginRoute: Boolean = false
+
         fun createLauncherIntent(context: Context): Intent =
             MainIntent.createLauncherIntent(context)
 
@@ -101,8 +124,23 @@ open class MainActivity : BaseComposeActivity() {
             bookUrl: String? = null,
         ): Intent = MainIntent.createSourceLoginIntent(context, type, sourceKey, bookUrl)
 
-        fun createBookSourceManageIntent(context: Context) =
-            MainIntent.createBookSourceManageIntent(context)
+        fun createWebViewIntent(
+            context: Context,
+            title: String? = null,
+            url: String,
+            sourceOrigin: String? = null,
+            sourceName: String? = null,
+            sourceType: Int? = null,
+            sourceVerificationEnable: Boolean = false,
+            refetchAfterSuccess: Boolean = true,
+            html: String? = null,
+        ): Intent = MainIntent.createWebViewIntent(
+            context, title, url, sourceOrigin, sourceName, sourceType,
+            sourceVerificationEnable, refetchAfterSuccess, html,
+        )
+
+        fun createBookSourceManageIntent(context: Context, importSource: String? = null) =
+            MainIntent.createBookSourceManageIntent(context, importSource)
 
         fun createBookSourceEditIntent(context: Context, sourceUrl: String? = null) =
             MainIntent.createBookSourceEditIntent(context, sourceUrl)
@@ -157,6 +195,31 @@ open class MainActivity : BaseComposeActivity() {
             readAloud = readAloud,
             inBookshelf = inBookshelf,
             chapterChanged = chapterChanged,
+        )
+
+        fun createReadBookMediaControlIntent(context: Context): Intent =
+            MainIntent.createReadBookMediaControlIntent(context)
+
+        fun createReadMangaIntent(
+            context: Context,
+            bookUrl: String? = null,
+            inBookshelf: Boolean = true,
+            chapterChanged: Boolean = false,
+        ): Intent = MainIntent.createReadMangaIntent(
+            context = context,
+            bookUrl = bookUrl,
+            inBookshelf = inBookshelf,
+            chapterChanged = chapterChanged,
+        )
+
+        fun createAudioPlayIntent(
+            context: Context,
+            bookUrl: String? = null,
+            inBookshelf: Boolean = true,
+        ): Intent = MainIntent.createAudioPlayIntent(
+            context = context,
+            bookUrl = bookUrl,
+            inBookshelf = inBookshelf,
         )
 
         fun createSearchIntent(
@@ -225,12 +288,13 @@ open class MainActivity : BaseComposeActivity() {
     private val otherSettingsGateway by inject<OtherSettingsGateway>()
     private val mangaSettingsGateway by inject<MangaSettingsGateway>()
     private val backupSettingsGateway by inject<BackupSettingsGateway>()
-    private val routeEvents = MutableSharedFlow<NavKey>(extraBufferCapacity = 1)
+    private val routeEvents = MutableSharedFlow<RouteEvent>(extraBufferCapacity = 1)
     private var shouldApplyDefaultToRead = true
     private var restoredReadBookRoute: MainRouteReadBook? = null
     private var latestBackStack: List<NavKey> = emptyList()
     internal var activeReadBookInputHandler: ReadBookInputHandler? = null
     internal var activeReadBookRoute: MainRouteReadBook? = null
+    internal var activeMangaKeyHandler: ((Int) -> Boolean)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -251,8 +315,6 @@ open class MainActivity : BaseComposeActivity() {
         lifecycleScope.launch {
             //版本更新
             upVersion()
-            //设置本地密码
-            notifyAppCrash()
             //备份同步
             backupSync()
             //自动更新书籍
@@ -270,7 +332,12 @@ open class MainActivity : BaseComposeActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (!intent.hasExplicitStartRoute()) return
-        routeEvents.tryEmit(MainNavigator.resolveStartRoute(intent))
+        routeEvents.tryEmit(
+            RouteEvent(
+                route = MainNavigator.resolveStartRoute(intent),
+                resetToHome = MainIntent.shouldOpenRouteWithHomeParent(intent),
+            )
+        )
     }
 
     @OptIn(ExperimentalSharedTransitionApi::class)
@@ -304,6 +371,13 @@ open class MainActivity : BaseComposeActivity() {
             val resolved = MainNavigator.resolveStartRoute(intent)
             val hasExplicitStartRoute = intent?.hasExplicitStartRoute() == true
             when {
+                MainIntent.shouldOpenRouteWithHomeParent(intent) -> {
+                    if (resolved == MainRouteHome) {
+                        arrayOf(MainRouteHome)
+                    } else {
+                        arrayOf(MainRouteHome, resolved)
+                    }
+                }
                 !hasExplicitStartRoute && restoredReadBookRoute != null -> {
                     arrayOf(MainRouteHome, restoredReadBookRoute!!)
                 }
@@ -328,8 +402,12 @@ open class MainActivity : BaseComposeActivity() {
         }
 
         LaunchedEffect(backStack) {
-            routeEvents.collect { route ->
-                MainNavigator.navigateToRoute(backStack, route)
+            routeEvents.collect { event ->
+                MainNavigator.navigateToRoute(
+                    backStack = backStack,
+                    route = event.route,
+                    resetToHome = event.resetToHome,
+                )
             }
         }
 
@@ -421,6 +499,23 @@ open class MainActivity : BaseComposeActivity() {
                 MainNavigator.navigateBack(this@MainActivity, backStack)
             }
         }
+        TextSheetHost()
+    }
+
+    @Composable
+    private fun TextSheetHost() {
+        val sheet by textSheetFlow.collectAsStateWithLifecycle()
+        sheet?.let { data ->
+            MarkdownSheet(
+                show = true,
+                title = data.title,
+                content = data.content,
+                onDismissRequest = {
+                    textSheetFlow.value = null
+                    data.onDismiss?.invoke()
+                },
+            )
+        }
     }
 
     private fun checkStartupRoute(): Boolean {
@@ -450,13 +545,6 @@ open class MainActivity : BaseComposeActivity() {
             return@suspendCoroutine
         }
         LocalConfig.versionCode = appInfo.versionCode
-        if (LocalConfig.isFirstOpenApp) {
-            val help = String(assets.open("web/help/md/appHelp.md").readBytes())
-            val dialog = TextDialog(getString(R.string.help), help, TextDialog.Mode.MD)
-            dialog.setOnDismissListener { block.resume(null) }
-            showDialogFragment(dialog)
-            return@suspendCoroutine
-        }
         if (!BuildConfig.DEBUG) {
             lifecycleScope.launch {
                 try {
@@ -466,34 +554,15 @@ open class MainActivity : BaseComposeActivity() {
                         dialog.setOnDismissListener { block.resume(null) }
                         showDialogFragment(dialog)
                     } else {
-                        val fallback = String(assets.open("updateLog.md").readBytes())
-                        val dialog = TextDialog(getString(R.string.update_log), fallback, TextDialog.Mode.MD)
-                        dialog.setOnDismissListener { block.resume(null) }
-                        showDialogFragment(dialog)
+                        block.resume(null)
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
-                    val fallback = String(assets.open("updateLog.md").readBytes())
-                    val dialog = TextDialog(getString(R.string.update_log), fallback, TextDialog.Mode.MD)
-                    dialog.setOnDismissListener { block.resume(null) }
-                    showDialogFragment(dialog)
+                    block.resume(null)
                 }
             }
         } else {
             block.resume(null)
-        }
-    }
-
-    private fun notifyAppCrash() {
-        if (!LocalConfig.appCrash || BuildConfig.DEBUG) {
-            return
-        }
-        LocalConfig.appCrash = false
-        alert(getString(R.string.draw), "检测到阅读发生了崩溃，是否打开崩溃日志以便报告问题？") {
-            yesButton {
-                showDialogFragment<CrashLogsDialog>()
-            }
-            noButton()
         }
     }
 
@@ -591,6 +660,7 @@ open class MainActivity : BaseComposeActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (activeMangaKeyHandler?.invoke(keyCode) == true) return true
         if (activeReadBookInputHandler?.onKeyDown(keyCode, event) == true) return true
         return super.onKeyDown(keyCode, event)
     }
@@ -619,8 +689,27 @@ open class MainActivity : BaseComposeActivity() {
         }
     }
 
+    // ===== AudioPlay.CallBack（有声书播放器路由注册，转发加载状态给当前播放器）=====
+
+    override fun upLoading(loading: Boolean) {
+        activeAudioPlayViewModel?.onLoadingChanged(loading)
+    }
+
+    override fun upLyric(lyric: String?) {
+        activeAudioPlayViewModel?.onLyricChanged()
+    }
+
+    override fun upLyricP(position: Int) {
+        // 歌词暂不在界面展示
+    }
 
 }
+
+data class TextSheetData(
+    val title: String,
+    val content: String,
+    val onDismiss: (() -> Unit)? = null,
+)
 
 class LauncherW : MainActivity()
 class Launcher1 : MainActivity()

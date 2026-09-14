@@ -59,7 +59,7 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import io.legado.app.R
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.AccentColorButton
@@ -218,6 +218,7 @@ fun TinySettingItem(
 fun TinyDropdownSettingItem(
     title: String,
     selectedValue: String,
+    selectedDisplay: String? = null,
     displayEntries: Array<String>,
     entryValues: Array<String>,
     description: String? = null,
@@ -227,7 +228,9 @@ fun TinyDropdownSettingItem(
     onValueChange: (String) -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    val currentEntry = displayEntries.getOrNull(entryValues.indexOf(selectedValue)) ?: selectedValue
+    val currentEntry =
+        selectedDisplay ?: displayEntries.getOrNull(entryValues.indexOf(selectedValue))
+        ?: selectedValue
 
     Box(modifier = Modifier.fillMaxWidth()) {
         TinySettingItem(

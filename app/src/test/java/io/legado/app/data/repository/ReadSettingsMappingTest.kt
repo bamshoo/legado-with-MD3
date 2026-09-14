@@ -14,11 +14,11 @@ import kotlin.reflect.full.primaryConstructor
 class ReadSettingsMappingTest {
 
     @Test
-    fun `gateway 持久化映射覆盖 ReadSettings 全部 104 个字段`() {
+    fun `gateway 持久化映射覆盖 ReadSettings 全部 111 个字段`() {
         val actualKeys = ReadSettings().toGatewayPrefMap().keys
         val expectedKeys = ReadSettings().expectedGatewayPrefMap().keys
 
-        assertEquals(104, actualKeys.size)
+        assertEquals(111, actualKeys.size)
         assertEquals(expectedKeys, actualKeys)
     }
 
@@ -95,7 +95,7 @@ class ReadSettingsMappingTest {
         assertFalse(settings.readMenuIconShowText)
         assertTrue(settings.readMenuFloatingBottomBar)
         assertEquals(ReadMenuBlurStyle.Solid, settings.readMenuTopBarBlurStyle)
-        assertEquals(100, settings.readMenuBlurAlpha)
+        assertEquals(85, settings.readMenuBlurAlpha)
         assertEquals(1, settings.readMenuBorderWidth)
         assertEquals(3, settings.titleBarIconPosition)
         assertFalse(settings.showTitleBarIcons)
@@ -133,6 +133,7 @@ private fun readSettingsMappingSamples(): List<ReadSettings> {
         tocUiUseReplace = true,
         tocCountWords = false,
         useNewTocSheet = false,
+        maxLengthWithNoToc = 3000,
         readStyleSelect = 1007,
         comicStyleSelect = 1008,
         shareLayout = true,
@@ -166,6 +167,7 @@ private fun readSettingsMappingSamples(): List<ReadSettings> {
         readMenuTopBarBlurMode = 1037,
         readMenuBottomBarBlurMode = 1038,
         readMenuTopBarLiquidGlassButtons = true,
+        readMenuTopBarMergeButtons = true,
         readMenuTopBarTitleCapsule = true,
         readMenuBottomBarLiquidGlassButtons = true,
         readMenuTopBarBlurStyle = 1042,
@@ -202,10 +204,15 @@ private fun readSettingsMappingSamples(): List<ReadSettings> {
         base.copy(volumeKeyPage = false),
         base.copy(volumeKeyPageOnPlay = false),
         base.copy(keyPageOnLongPress = true),
+        base.copy(swipeToAddBookmark = true),
+        base.copy(bookmarkBadgeImage = "badge.svg"),
+        base.copy(bookmarkBadgeSize = 24),
         base.copy(sliderVibrator = true),
         base.copy(selectVibrator = true),
         base.copy(autoChangeSource = false),
         base.copy(autoSuggestDayNight = true),
+        base.copy(readingAnchorEnabled = false),
+        base.copy(readAloudDetachReminderEnabled = true),
         base.copy(selectText = false),
         base.copy(noAnimScrollPage = true),
         base.copy(optimizeRender = true),
@@ -244,11 +251,16 @@ private fun ReadSettings.expectedGatewayPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.volumeKeyPage to volumeKeyPage,
     PreferKey.volumeKeyPageOnPlay to volumeKeyPageOnPlay,
     PreferKey.keyPageOnLongPress to keyPageOnLongPress,
+    PreferKey.swipeToAddBookmark to swipeToAddBookmark,
+    PreferKey.bookmarkBadgeImage to bookmarkBadgeImage,
+    PreferKey.bookmarkBadgeSize to bookmarkBadgeSize,
     PreferKey.pageTouchSlop to pageTouchSlop,
     PreferKey.sliderVibrator to sliderVibrator,
     PreferKey.selectVibrator to selectVibrator,
     PreferKey.autoChangeSource to autoChangeSource,
     PreferKey.autoSuggestDayNight to autoSuggestDayNight,
+    PreferKey.readingAnchorEnabled to readingAnchorEnabled,
+    PreferKey.readAloudDetachReminderEnabled to readAloudDetachReminderEnabled,
     PreferKey.selectText to selectText,
     PreferKey.noAnimScrollPage to noAnimScrollPage,
     PreferKey.clickImgWay to clickImgWay,
@@ -266,6 +278,7 @@ private fun ReadSettings.expectedGatewayPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.tocUiUseReplace to tocUiUseReplace,
     PreferKey.tocCountWords to tocCountWords,
     PreferKey.useNewTocSheet to useNewTocSheet,
+    PreferKey.maxLengthWithNoToc to maxLengthWithNoToc,
     PreferKey.readUrlOpenInBrowser to readUrlInBrowser,
     PreferKey.readStyleSelect to readStyleSelect,
     PreferKey.comicStyleSelect to comicStyleSelect,
@@ -301,6 +314,7 @@ private fun ReadSettings.expectedGatewayPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.readMenuTopBarBlurMode to readMenuTopBarBlurMode,
     PreferKey.readMenuBottomBarBlurMode to readMenuBottomBarBlurMode,
     PreferKey.readMenuTopBarLiquidGlassButtons to readMenuTopBarLiquidGlassButtons,
+    PreferKey.readMenuTopBarMergeButtons to readMenuTopBarMergeButtons,
     PreferKey.readMenuTopBarTitleCapsule to readMenuTopBarTitleCapsule,
     PreferKey.readMenuBottomBarLiquidGlassButtons to readMenuBottomBarLiquidGlassButtons,
     PreferKey.readMenuFloatingIconLiquidGlass to readMenuFloatingIconLiquidGlass,

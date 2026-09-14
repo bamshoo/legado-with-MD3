@@ -1,8 +1,8 @@
 package io.legado.app.data.repository
 
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.mutablePreferencesOf
+import androidx.datastore.preferences.core.stringPreferencesKey
 import io.legado.app.constant.PreferKey
 import io.legado.app.domain.gateway.MangaSettingsGateway
 import io.legado.app.domain.model.settings.MangaSettings
@@ -22,14 +22,14 @@ import kotlin.concurrent.thread
 class MangaSettingsMappingTest {
 
     @Test
-    fun `漫画设置 28 键写映射逐字段对应`() {
+    fun `漫画设置 38 键写映射逐字段对应`() {
         mangaMappingSamples().forEach { settings ->
             assertEquals(settings.expectedPrefMap(), settings.toPrefMap())
         }
     }
 
     @Test
-    fun `漫画设置 28 键读映射逐字段对应`() {
+    fun `漫画设置 38 键读映射逐字段对应`() {
         mangaMappingSamples().forEach { expected ->
             assertEquals(expected, expected.expectedPrefMap().toTestPreferences().toMangaSettings())
         }
@@ -176,9 +176,15 @@ private fun mangaMappingSamples(): List<MangaSettings> {
     val base = MangaSettings(
         scrollMode = 11,
         preDownloadNum = 22,
+        chapterPrefetchCount = 2,
         autoPageSpeed = 33,
         footerConfig = "manga-footer",
         background = 0xFF123456.toInt(),
+        autoBackground = true,
+        pageScaleType = 5,
+        zoomStartPosition = 3,
+        widePageMode = 2,
+        doublePageMode = 2,
         colorFilter = "manga-filter",
         eInkThreshold = 44,
         webtoonSidePaddingDp = 55,
@@ -198,6 +204,7 @@ private fun mangaMappingSamples(): List<MangaSettings> {
         base.copy(disableMangaScale = false),
         base.copy(disableMangaScrollAnimation = true),
         base.copy(disableMangaCrossFade = true),
+        base.copy(autoOfflineCache = true),
         base.copy(disableClickScroll = true),
         base.copy(longClick = false),
         base.copy(hideTitle = true),
@@ -205,6 +212,14 @@ private fun mangaMappingSamples(): List<MangaSettings> {
         base.copy(enableGray = true),
         base.copy(volumeKeyPage = true),
         base.copy(reverseVolumeKeyPage = true),
+        base.copy(menuTopBarLiquidGlass = true),
+        base.copy(menuBottomBarLiquidGlass = true),
+        base.copy(menuBottomBarFloating = false),
+        base.copy(menuBottomBarBlur = true),
+        base.copy(menuTopBarCompact = true),
+        base.copy(doublePageCoverSingle = false),
+        base.copy(doublePageInvert = true),
+        base.copy(doublePageShift = true),
     )
 }
 
@@ -215,11 +230,21 @@ private fun MangaSettings.expectedPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.disableMangaCrossFade to disableMangaCrossFade,
     PreferKey.mangaScrollMode to scrollMode,
     PreferKey.mangaPreDownloadNum to preDownloadNum,
+    PreferKey.mangaChapterPrefetchCount to chapterPrefetchCount,
+    PreferKey.mangaAutoOfflineCache to autoOfflineCache,
     PreferKey.mangaAutoPageSpeed to autoPageSpeed,
     PreferKey.mangaFooterConfig to footerConfig,
     PreferKey.disableClickScroll to disableClickScroll,
     PreferKey.mangaLongClick to longClick,
     PreferKey.mangaBackground to background,
+    PreferKey.mangaAutoBackground to autoBackground,
+    PreferKey.mangaPageScaleType to pageScaleType,
+    PreferKey.mangaZoomStartPosition to zoomStartPosition,
+    PreferKey.mangaWidePageMode to widePageMode,
+    PreferKey.mangaDoublePageMode to doublePageMode,
+    PreferKey.mangaDoublePageCoverSingle to doublePageCoverSingle,
+    PreferKey.mangaDoublePageInvert to doublePageInvert,
+    PreferKey.mangaDoublePageShift to doublePageShift,
     PreferKey.mangaColorFilter to colorFilter,
     PreferKey.hideMangaTitle to hideTitle,
     PreferKey.enableMangaEInk to enableEInk,
@@ -228,6 +253,14 @@ private fun MangaSettings.expectedPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.webtoonSidePaddingDp to webtoonSidePaddingDp,
     PreferKey.mangaVolumeKeyPage to volumeKeyPage,
     PreferKey.reverseVolumeKeyPage to reverseVolumeKeyPage,
+    PreferKey.mangaMenuTopBarLiquidGlass to menuTopBarLiquidGlass,
+    PreferKey.mangaMenuBottomBarLiquidGlass to menuBottomBarLiquidGlass,
+    PreferKey.mangaMenuBottomBarFloating to menuBottomBarFloating,
+    PreferKey.mangaMenuBottomBarBlur to menuBottomBarBlur,
+    PreferKey.mangaMenuTopBarCompact to menuTopBarCompact,
+    PreferKey.mangaMenuColorSource to menuColorSource,
+    PreferKey.mangaMenuSeedColor to menuSeedColor,
+    PreferKey.mangaMenuPaletteStyle to menuPaletteStyle,
     PreferKey.mangaClickActionTL to clickActionTL,
     PreferKey.mangaClickActionTC to clickActionTC,
     PreferKey.mangaClickActionTR to clickActionTR,

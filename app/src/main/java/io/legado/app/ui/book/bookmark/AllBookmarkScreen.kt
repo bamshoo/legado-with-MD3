@@ -428,13 +428,6 @@ private fun BookmarkGroupHeaderContent(
             supportingColor = LegadoTheme.colorScheme.onSurfaceVariant,
             trailingIconColor = LegadoTheme.colorScheme.onSurfaceVariant
         ),
-        headlineContent = {
-            AppText(
-                text = title,
-                style = LegadoTheme.typography.titleMedium,
-                color = contentColor
-            )
-        },
         supportingContent = {
             subtitle?.let {
                 AppText(
@@ -444,5 +437,11 @@ private fun BookmarkGroupHeaderContent(
                 )
             }
         }
-    )
+    ) {
+        AppText(
+            text = title,
+            style = LegadoTheme.typography.titleMedium,
+            color = contentColor
+        )
+    }
 }

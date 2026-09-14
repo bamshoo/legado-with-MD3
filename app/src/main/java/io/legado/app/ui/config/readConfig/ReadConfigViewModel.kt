@@ -130,9 +130,14 @@ private fun ReadConfigIntent.toSettingsTransform(): (ReadSettings) -> ReadSettin
     is ReadConfigIntent.PageTouchSlopChanged -> { settings -> settings.copy(pageTouchSlop = value) }
     is ReadConfigIntent.SliderVibratorChanged -> { settings -> settings.copy(sliderVibrator = value) }
     is ReadConfigIntent.UseNewTocSheetChanged -> { settings -> settings.copy(useNewTocSheet = value) }
+    is ReadConfigIntent.MaxLengthWithNoTocChanged -> {
+        settings -> settings.copy(maxLengthWithNoToc = value.coerceIn(3000, 100000))
+    }
     is ReadConfigIntent.SelectVibratorChanged -> { settings -> settings.copy(selectVibrator = value) }
     is ReadConfigIntent.AutoChangeSourceChanged -> { settings -> settings.copy(autoChangeSource = value) }
     is ReadConfigIntent.AutoSuggestDayNightChanged -> { settings -> settings.copy(autoSuggestDayNight = value) }
+    is ReadConfigIntent.ReadingAnchorChanged -> { settings -> settings.copy(readingAnchorEnabled = value) }
+    is ReadConfigIntent.ReadAloudDetachReminderChanged -> { settings -> settings.copy(readAloudDetachReminderEnabled = value) }
     is ReadConfigIntent.SelectTextChanged -> { settings -> settings.copy(selectText = value) }
     is ReadConfigIntent.NoAnimScrollPageChanged -> { settings -> settings.copy(noAnimScrollPage = value) }
     is ReadConfigIntent.ClickImgWayChanged -> { settings -> settings.copy(clickImgWay = value) }
@@ -198,9 +203,12 @@ private fun ReadSettings.toUiState(
         pageTouchSlop = pageTouchSlop,
         sliderVibrator = sliderVibrator,
         useNewTocSheet = useNewTocSheet,
+        maxLengthWithNoToc = maxLengthWithNoToc,
         selectVibrator = selectVibrator,
         autoChangeSource = autoChangeSource,
         autoSuggestDayNight = autoSuggestDayNight,
+        readingAnchorEnabled = readingAnchorEnabled,
+        readAloudDetachReminderEnabled = readAloudDetachReminderEnabled,
         selectText = selectText,
         noAnimScrollPage = noAnimScrollPage,
         clickImgWay = clickImgWay,

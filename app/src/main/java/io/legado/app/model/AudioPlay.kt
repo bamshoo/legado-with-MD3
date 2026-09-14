@@ -18,7 +18,8 @@ import io.legado.app.help.book.getBookSource
 import io.legado.app.help.book.readSimulating
 import io.legado.app.help.book.simulatedTotalChapterNum
 import io.legado.app.help.book.update
-import io.legado.app.help.config.AppConfig
+import io.legado.app.domain.gateway.OtherSettingsGateway
+import io.legado.app.domain.gateway.ReadSettingsGateway
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.model.webBook.WebBook
 import io.legado.app.service.AudioPlayService
@@ -28,20 +29,26 @@ import io.legado.app.utils.toastOnUi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancelChildren
+import org.koin.core.context.GlobalContext
 import splitties.init.appCtx
 
 @SuppressLint("StaticFieldLeak")
 @Suppress("unused")
 object AudioPlay : CoroutineScope by MainScope() {
 
-    enum class PlayMode(val iconRes: Int) {
-        LIST_END_STOP(R.drawable.ic_play_mode_list_end_stop),
-        RANDOM(R.drawable.ic_exchange),
-        LIST_LOOP(R.drawable.ic_play_mode_list_loop);
+    private val otherSettingsGateway get() = GlobalContext.get().get<OtherSettingsGateway>()
+    private val readSettingsGateway get() = GlobalContext.get().get<ReadSettingsGateway>()
+
+    enum class PlayMode {
+        LIST_END_STOP,
+        SINGLE_LOOP,
+        RANDOM,
+        LIST_LOOP;
 
         fun next(): PlayMode {
             return when (this) {
-                LIST_END_STOP -> RANDOM
+                LIST_END_STOP -> SINGLE_LOOP
+                SINGLE_LOOP -> RANDOM
                 RANDOM -> LIST_LOOP
                 LIST_LOOP -> LIST_END_STOP
             }
@@ -49,6 +56,7 @@ object AudioPlay : CoroutineScope by MainScope() {
     }
 
     var playMode = PlayMode.LIST_END_STOP
+    var speed = 1f  // 播放倍速（进程内记忆，AUDIO_SPEED 事件回写）
     var status = Status.STOP
     private var activityContext: Context? = null
     private var serviceContext: Context? = null
@@ -69,6 +77,8 @@ object AudioPlay : CoroutineScope by MainScope() {
 
     fun changePlayMode() {
         playMode = playMode.next()
+        book?.setPlayMode(playMode.ordinal)
+        saveRead()
         postEvent(EventBus.PLAY_MODE_CHANGED, playMode)
     }
 
@@ -104,6 +114,11 @@ object AudioPlay : CoroutineScope by MainScope() {
         durChapterPos = book.durChapterPos
         durPlayUrl = ""
         durAudioSize = 0
+        // 恢复本书记忆的播放模式
+        PlayMode.entries.getOrNull(book.getPlayMode())?.let {
+            playMode = it
+            postEvent(EventBus.PLAY_MODE_CHANGED, it)
+        }
         upDurChapter()
         SourceCallBack.callBackBook(SourceCallBack.START_READ, bookSource, book, durChapter)
         postEvent(EventBus.AUDIO_BUFFER_PROGRESS, 0)
@@ -268,6 +283,20 @@ object AudioPlay : CoroutineScope by MainScope() {
         }
     }
 
+    fun adjustGain(gain: Int) {
+        book?.let {
+            it.setAudioGain(gain)
+            // 增益需随书持久化，否则重启/重新拉取书籍后丢失
+            Coroutine.async { it.save() }
+        }
+        if (AudioPlayService.isRun) {
+            context.startService<AudioPlayService> {
+                action = IntentAction.adjustGain
+                putExtra("gain", gain)
+            }
+        }
+    }
+
     fun adjustProgress(position: Int) {
         durChapterPos = position
         saveRead()
@@ -316,6 +345,13 @@ object AudioPlay : CoroutineScope by MainScope() {
                     saveRead()
                     loadPlayUrl()
                 }
+            }
+
+            PlayMode.SINGLE_LOOP -> {
+                durChapterPos = 0
+                durPlayUrl = ""
+                saveRead()
+                loadPlayUrl()
             }
 
             PlayMode.RANDOM -> {
@@ -375,8 +411,8 @@ object AudioPlay : CoroutineScope by MainScope() {
                 appDb.bookChapterDao.getChapter(book.bookUrl, book.durChapterIndex)?.let {
                     book.durChapterTitle = it.getDisplayTitle(
                         ContentProcessor.get(book.name, book.origin).getTitleReplaceRules(),
-                        book.getUseReplaceRule(AppConfig.replaceEnableDefault),
-                        chineseConverterType = AppConfig.chineseConverterType,
+                        book.getUseReplaceRule(otherSettingsGateway.currentSettings.replaceEnableDefault),
+                        chineseConverterType = readSettingsGateway.currentSettings.chineseConverterType,
                     )
                     SourceCallBack.callBackBook(SourceCallBack.SAVE_READ, bookSource, book, it)
                 }

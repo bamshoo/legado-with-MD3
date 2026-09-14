@@ -39,7 +39,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Toc
+import androidx.compose.material.icons.automirrored.filled.Toc
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -117,6 +117,7 @@ internal fun MenuTitleBar(
     val labelStyle = LegadoTheme.typography.labelSmallEmphasized.copy(
         shadow = menuTextShadow
     )
+    val useTitleCapsule = state.menuConfig.readMenuTopBarTitleCapsule
 
     Column(
         modifier = Modifier
@@ -153,7 +154,7 @@ internal fun MenuTitleBar(
                 }
             )
             .then(
-                if (topBarBorderWidth > 0) {
+                if (topBarBorderWidth > 0 && !useTitleCapsule) {
                     Modifier.drawBehind {
                         val strokeWidth = topBarBorderWidth.dp.toPx()
                         drawLine(
@@ -171,7 +172,6 @@ internal fun MenuTitleBar(
                 )
             )
     ) {
-        val useTitleCapsule = state.menuConfig.readMenuTopBarTitleCapsule
         val capsuleIconColor = LegadoTheme.colorScheme.onSurfaceVariant
 
         // Title row: left group (back + capsule/title) + right group (actions)
@@ -222,12 +222,16 @@ internal fun MenuTitleBar(
             }
 
             // Right group: actions
-            if (readMenuTopBarButtonLiquidGlassEnabled(backdrop, state.menuConfig)) {
+            if (state.menuConfig.readMenuTopBarMergeButtons) {
                 MenuTitleBarMergedGlassButton(
                     state = state,
                     colors = colors,
                     onIntent = onIntent,
                     backdrop = backdrop,
+                    glassEnabled = readMenuTopBarButtonLiquidGlassEnabled(
+                        backdrop,
+                        state.menuConfig
+                    ),
                 )
             } else {
                 val compact = state.menuConfig.titleBarCompact
@@ -426,6 +430,8 @@ private fun MenuTitleGlassButton(
         iconStyle = state.menuConfig.titleBarIconStyle,
         modifier = modifier,
         onLongClick = onLongClick,
+        menuBorderEnabled = state.menuConfig.readMenuBorderWidth > 0 &&
+                state.menuConfig.readMenuTopBarTitleCapsule,
         contentDescription = contentDescription,
     )
 }
@@ -443,6 +449,7 @@ internal fun ReadMenuGlassIconButton(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     selected: Boolean = false,
+    menuBorderEnabled: Boolean = false,
     contentDescription: String? = null,
 ) {
     ReadMenuGlassButtonSurface(
@@ -455,6 +462,7 @@ internal fun ReadMenuGlassIconButton(
         modifier = modifier,
         onLongClick = onLongClick,
         selected = selected,
+        menuBorderEnabled = menuBorderEnabled,
         contentDescription = contentDescription,
     ) { tint ->
         Icon(
@@ -478,6 +486,7 @@ internal fun ReadMenuGlassButtonSurface(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     selected: Boolean = false,
+    menuBorderEnabled: Boolean = false,
     contentDescription: String? = null,
     content: @Composable (Color) -> Unit,
 ) {
@@ -492,6 +501,10 @@ internal fun ReadMenuGlassButtonSurface(
     )
     val border = when {
         selected -> BorderStroke(1.5.dp, LegadoTheme.colorScheme.secondary)
+        menuBorderEnabled -> BorderStroke(
+            menuConfig.readMenuBorderWidth.dp,
+            Color(readMenuBorderColor(menuConfig)),
+        )
         !glassEnabled && iconStyle == 2 -> BorderStroke(1.dp, tint.copy(alpha = 0.45f))
         else -> null
     }
@@ -559,6 +572,19 @@ private fun RowScope.TitleCapsuleGlassLayout(
     val glassEnabled = readerMenuLiquidGlassAvailable(backdrop)
             && state.menuConfig.readMenuTopBarLiquidGlassButtons
     val iconStyle = state.menuConfig.titleBarIconStyle
+    val border = when {
+        state.menuConfig.readMenuBorderWidth > 0 -> BorderStroke(
+            state.menuConfig.readMenuBorderWidth.dp,
+            Color(readMenuBorderColor(state.menuConfig)),
+        )
+
+        iconStyle == 2 -> BorderStroke(
+            1.dp,
+            LegadoTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+        )
+
+        else -> null
+    }
 
     Row(
         modifier = Modifier
@@ -581,34 +607,19 @@ private fun RowScope.TitleCapsuleGlassLayout(
                         1 -> LegadoTheme.colorScheme.surfaceContainerLow
                         else -> Color.Transparent
                     }
-                    val border = when (iconStyle) {
-                        2 -> BorderStroke(
-                            1.dp,
-                            LegadoTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-                        )
-
-                        else -> null
-                    }
                     Modifier
                         .clip(pillShape)
                         .background(containerColor, pillShape)
-                        .then(if (border != null) Modifier.border(border, pillShape) else Modifier)
                 }
             )
+            .then(if (border != null) Modifier.border(border, pillShape) else Modifier)
             .then(
-                if (!state.isLocalBook) {
-                    Modifier.combinedClickable(
-                        indication = if (glassEnabled) null else LocalIndication.current,
-                        interactionSource = remember { MutableInteractionSource() },
-                        onClick = { onIntent(ReadBookIntent.OpenBookInfo) },
-                        onLongClick = { onIntent(ReadBookIntent.OpenChapterUrl) },
-                    )
-                } else {
-                    Modifier.clickable(
-                        indication = if (glassEnabled) null else LocalIndication.current,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) { onIntent(ReadBookIntent.OpenBookInfo) }
-                }
+                Modifier.combinedClickable(
+                    indication = if (glassEnabled) null else LocalIndication.current,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = { onIntent(ReadBookIntent.OpenBookInfo) },
+                    onLongClick = { onIntent(ReadBookIntent.OpenBookInfoDirect) },
+                )
             )
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -728,6 +739,7 @@ private fun MenuTitleBarMergedGlassButton(
     colors: ReadMenuColors,
     onIntent: (ReadBookIntent) -> Unit,
     backdrop: Backdrop?,
+    glassEnabled: Boolean,
 ) {
     var sourceExpanded by remember { mutableStateOf(false) }
     var refreshExpanded by remember { mutableStateOf(false) }
@@ -735,20 +747,52 @@ private fun MenuTitleBarMergedGlassButton(
     val pillShape = RoundedCornerShape(50)
     val tint = LegadoTheme.colorScheme.onSurfaceVariant
     val compact = state.menuConfig.titleBarCompact
+    val iconStyle = state.menuConfig.titleBarIconStyle
 
     Box {
         Row(
             modifier = Modifier
                 .height(40.dp)
-                .readMenuLiquidGlass(
-                    backdrop = backdrop,
-                    colors = colors,
-                    shape = pillShape,
-                    useTopBarStyle = true,
-                    useLens = true,
-                    blurRadius = 32.dp,
-                    interactive = true,
-                    menuConfig = state.menuConfig,
+                .then(
+                    if (glassEnabled) {
+                        Modifier.readMenuLiquidGlass(
+                            backdrop = backdrop,
+                            colors = colors,
+                            shape = pillShape,
+                            useTopBarStyle = true,
+                            useLens = true,
+                            blurRadius = 32.dp,
+                            interactive = true,
+                            menuConfig = state.menuConfig,
+                        )
+                    } else {
+                        val containerColor = when (iconStyle) {
+                            1 -> LegadoTheme.colorScheme.surfaceContainerLow
+                            else -> Color.Transparent
+                        }
+                        Modifier.background(containerColor, pillShape)
+                    }
+                )
+                .then(
+                    when {
+                        state.menuConfig.readMenuBorderWidth > 0 &&
+                                state.menuConfig.readMenuTopBarTitleCapsule ->
+                            Modifier.border(
+                                BorderStroke(
+                                    state.menuConfig.readMenuBorderWidth.dp,
+                                    Color(readMenuBorderColor(state.menuConfig)),
+                                ),
+                                pillShape,
+                            )
+
+                        !glassEnabled && iconStyle == 2 ->
+                            Modifier.border(
+                                BorderStroke(1.dp, tint.copy(alpha = 0.45f)),
+                                pillShape,
+                            )
+
+                        else -> Modifier
+                    }
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -796,7 +840,7 @@ private fun MenuTitleBarMergedGlassButton(
                 // TXT directory rule
                 if (state.isLocalTxt) {
                     MergedGlassIconButton(
-                        icon = Icons.Default.Toc,
+                        icon = Icons.AutoMirrored.Filled.Toc,
                         tint = tint,
                         contentDescription = stringResource(R.string.txt_toc_rule),
                         onClick = { onIntent(ReadBookIntent.MenuTocRegex) },
@@ -961,7 +1005,7 @@ private fun TxtTocRuleActionButton(
 ) {
     MenuTitleGlassButton(
         onClick = { onIntent(ReadBookIntent.MenuTocRegex) },
-        icon = Icons.Default.Toc,
+        icon = Icons.AutoMirrored.Filled.Toc,
         contentDescription = stringResource(R.string.txt_toc_rule),
         state = state,
         colors = colors,

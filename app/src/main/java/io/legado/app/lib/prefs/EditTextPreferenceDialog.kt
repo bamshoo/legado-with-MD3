@@ -9,6 +9,8 @@ import io.legado.app.utils.applyEInkBorderIfNeeded
 
 class EditTextPreferenceDialog : EditTextPreferenceDialogFragmentCompat() {
 
+    private val themeSettingsGateway get() = org.koin.core.context.GlobalContext.get().get<io.legado.app.domain.gateway.ThemeSettingsGateway>()
+
     companion object {
 
         fun newInstance(key: String): EditTextPreferenceDialog {
@@ -36,7 +38,7 @@ class EditTextPreferenceDialog : EditTextPreferenceDialogFragmentCompat() {
 
     override fun onStart() {
         super.onStart()
-        dialog?.applyEInkBorderIfNeeded()
+dialog?.applyEInkBorderIfNeeded()
     }
 
 }

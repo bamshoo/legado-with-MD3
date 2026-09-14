@@ -1,6 +1,9 @@
 package io.legado.app.ui.book.read
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -11,10 +14,12 @@ import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.ImageLoader
+import coil3.ImageLoader
 import io.legado.app.R
 import io.legado.app.data.repository.ReadPreferences
 import io.legado.app.domain.gateway.CoverSettingsGateway
+import io.legado.app.domain.usecase.BookmarkTargetVerdict
+import io.legado.app.help.coil.CoverExtras
 import io.legado.app.ui.book.read.sheet.AiRewritePresetConfigSheet
 import io.legado.app.ui.book.read.sheet.AiTextCleanSheet
 import io.legado.app.ui.book.read.sheet.AiTextRewriteSheet
@@ -28,6 +33,7 @@ import io.legado.app.ui.book.read.sheet.DownloadSheet
 import io.legado.app.ui.book.read.sheet.EyeProtectionConfigSheet
 import io.legado.app.ui.book.read.sheet.FloatingBarIconConfigSheet
 import io.legado.app.ui.book.read.sheet.HighlightRuleConfigSheet
+import io.legado.app.ui.book.read.sheet.MarkingSheet
 import io.legado.app.ui.book.read.sheet.MoreConfigSheet
 import io.legado.app.ui.book.read.sheet.PageAnimConfigSheet
 import io.legado.app.ui.book.read.sheet.PageKeyConfigSheet
@@ -54,37 +60,92 @@ import io.legado.app.ui.widget.components.bookmark.BookmarkEditSheet
 import io.legado.app.ui.widget.components.changeSource.ChangeSourceSheet
 import io.legado.app.ui.widget.components.image.cover.usesDefaultBookCover
 import io.legado.app.ui.widget.components.log.AppLogSheet
+import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.utils.toastOnUi
 import kotlinx.coroutines.flow.collectLatest
 import org.koin.compose.koinInject
 import io.legado.app.model.BookCover as BookCoverModel
 
 /**
- * Stateless ReadBook screen — renders BackHandler + dialogs + sheets.
- * ReadView is hosted in the XML layout, not here.
+ * Stateless reader overlays: back handling, dialogs and sheets.
+ * [ReadBookRouteScreen] owns the Compose Canvas reading surface.
  */
+@Composable
+fun ReadBookOverlayRoute(
+    viewModel: ReadBookViewModel,
+    state: ReadBookUiState,
+    preferences: ReadPreferences,
+    onOpenTextSelectMenuConfig: () -> Unit,
+    onPickBookmarkBadgeImage: () -> Unit,
+    onResetBookmarkBadge: () -> Unit,
+) {
+    val aiActive = rememberFeatureActivated(
+        state.activeSheet is ReadBookSheet.ChapterSummary ||
+            state.activeSheet is ReadBookSheet.AiTextClean ||
+            state.activeSheet is ReadBookSheet.AiTextRewrite ||
+            state.activeSheet is ReadBookSheet.AiRewritePresetConfig
+    )
+    val highlightActive = rememberFeatureActivated(
+        state.activeSheet is ReadBookSheet.HighlightRuleConfig
+    )
+    val markingActive = rememberFeatureActivated(state.activeSheet is ReadBookSheet.Marking)
+    val contentEditActive = rememberFeatureActivated(state.activeSheet is ReadBookSheet.ContentEdit)
+    val contentProcessActive = rememberFeatureActivated(
+        state.activeSheet is ReadBookSheet.TextProcessing
+    )
+    val aiState = if (aiActive) {
+        viewModel.aiState.collectAsStateWithLifecycle().value
+    } else ReadAiUiState()
+    val highlightRuleState = if (highlightActive) {
+        viewModel.highlightRuleState.collectAsStateWithLifecycle().value
+    } else HighlightRuleConfigUiState()
+    val markingState = if (markingActive) {
+        viewModel.markingState.collectAsStateWithLifecycle().value
+    } else MarkingUiState()
+    val contentEditState = if (contentEditActive) {
+        viewModel.contentEditState.collectAsStateWithLifecycle().value
+    } else ContentEditUiState()
+    val contentProcessState = if (contentProcessActive) {
+        viewModel.contentProcessState.collectAsStateWithLifecycle().value
+    } else ContentProcessConfigUiState()
+    ReadBookScreen(
+        state = state,
+        aiState = aiState,
+        highlightRuleState = highlightRuleState,
+        markingState = markingState,
+        contentEditState = contentEditState,
+        contentProcessState = contentProcessState,
+        preferences = preferences,
+        onIntent = viewModel::onIntent,
+        onOpenTextSelectMenuConfig = onOpenTextSelectMenuConfig,
+        onPickBookmarkBadgeImage = onPickBookmarkBadgeImage,
+        onResetBookmarkBadge = onResetBookmarkBadge,
+    )
+}
+
+@Composable
+private fun rememberFeatureActivated(active: Boolean): Boolean {
+    var activated by remember { mutableStateOf(active) }
+    LaunchedEffect(active) {
+        if (active) activated = true
+    }
+    return active || activated
+}
+
 @Composable
 fun ReadBookScreen(
     state: ReadBookUiState,
     aiState: ReadAiUiState,
     highlightRuleState: HighlightRuleConfigUiState,
+    markingState: MarkingUiState,
     contentEditState: ContentEditUiState,
     contentProcessState: ContentProcessConfigUiState,
     preferences: ReadPreferences,
     onIntent: (ReadBookIntent) -> Unit,
-    onBack: () -> Unit,
     onOpenTextSelectMenuConfig: () -> Unit,
+    onPickBookmarkBadgeImage: () -> Unit,
+    onResetBookmarkBadge: () -> Unit,
 ) {
-    BackHandler {
-        when {
-            state.activeSheet != null -> onIntent(ReadBookIntent.DismissSheet)
-            state.isShowingSearchResult -> onIntent(ReadBookIntent.ExitSearch)
-            state.isAutoPage -> onIntent(ReadBookIntent.StopAutoPage)
-            state.menuState.canNavigateBack -> onIntent(ReadBookIntent.ReadMenuBack)
-            else -> onIntent(ReadBookIntent.CloseReadBook())
-        }
-    }
-
     // Dialogs driven by activeDialog state
     val restoreDialog = state.activeDialog as? ReadBookDialog.ConfirmRestoreProgress
     val syncDialog = state.activeDialog as? ReadBookDialog.SureSyncProgress
@@ -92,6 +153,38 @@ fun ReadBookScreen(
     val skipDialog = state.activeDialog as? ReadBookDialog.ConfirmSkipToChapter
     val payDialog = state.activeDialog as? ReadBookDialog.ConfirmChapterPay
     val addToBookshelfDialog = state.activeDialog as? ReadBookDialog.ConfirmAddToBookshelf
+    val readRecordAliasDialog = state.activeDialog as? ReadBookDialog.ReadRecordAliasConflict
+    var rememberAliasChoice by remember(readRecordAliasDialog) { mutableStateOf(false) }
+
+    AppAlertDialog(
+        show = readRecordAliasDialog != null,
+        onDismissRequest = { onIntent(ReadBookIntent.ResolveReadRecordAlias(false, rememberAliasChoice)) },
+        title = stringResource(R.string.read_record_alias_title),
+        text = readRecordAliasDialog?.let {
+            stringResource(R.string.read_record_alias_message, it.bookName, it.readTime / 60000, it.author)
+        }.orEmpty(),
+        confirmText = stringResource(R.string.read_record_alias_merge),
+        onConfirm = { onIntent(ReadBookIntent.ResolveReadRecordAlias(true, rememberAliasChoice)) },
+        dismissText = stringResource(R.string.read_record_alias_keep_separate),
+        onDismiss = { onIntent(ReadBookIntent.ResolveReadRecordAlias(false, rememberAliasChoice)) },
+        content = {
+            Row(
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = rememberAliasChoice,
+                    onCheckedChange = { rememberAliasChoice = it },
+                )
+                AppText(stringResource(R.string.read_record_alias_remember))
+                TextButton(onClick = {
+                    onIntent(ReadBookIntent.ClearReadRecordAliasDecisions)
+                }) {
+                    AppText(stringResource(R.string.read_record_alias_revoke))
+                }
+            }
+        },
+    )
 
     AppAlertDialog(
         show = restoreDialog != null,
@@ -164,6 +257,30 @@ fun ReadBookScreen(
         onConfirm = { onIntent(ReadBookIntent.ConfirmAddCurrentBookToBookshelf) },
         dismissText = stringResource(R.string.cancel),
         onDismiss = { onIntent(ReadBookIntent.ExitWithoutAddingCurrentBookToBookshelf) },
+    )
+
+    // 书签/笔记跳转前校验未通过的确认框
+    val pendingTarget = state.pendingBookmarkTarget
+    AppAlertDialog(
+        show = pendingTarget != null,
+        onDismissRequest = { onIntent(ReadBookIntent.CancelBookmarkTargetJump) },
+        title = stringResource(R.string.bookmark_target_may_shift),
+        text = stringResource(
+            when (pendingTarget?.verdict) {
+                is BookmarkTargetVerdict.SourceChanged ->
+                    R.string.bookmark_target_source_changed
+
+                BookmarkTargetVerdict.TitleMismatch ->
+                    R.string.bookmark_target_title_mismatch
+
+                null -> R.string.bookmark_target_title_mismatch
+                BookmarkTargetVerdict.Match -> R.string.bookmark_target_title_mismatch
+            }
+        ),
+        confirmText = stringResource(R.string.bookmark_target_jump_anyway),
+        onConfirm = { onIntent(ReadBookIntent.ConfirmBookmarkTargetJump) },
+        dismissText = stringResource(R.string.cancel),
+        onDismiss = { onIntent(ReadBookIntent.CancelBookmarkTargetJump) },
     )
 
     // AppModalBottomSheet-based sheets — always composed, controlled by show flag
@@ -261,6 +378,15 @@ fun ReadBookScreen(
         onDismissRequest = dismissSheet,
         onIntent = onIntent,
     )
+    MarkingSheet(
+        show = state.activeSheet is ReadBookSheet.Marking,
+        state = markingState,
+        onDismissRequest = { onIntent(ReadBookIntent.DismissMarking) },
+        onSave = { style, note ->
+            onIntent(ReadBookIntent.SaveMarking(style, note))
+        },
+        onDelete = { onIntent(ReadBookIntent.DeleteMarking) },
+    )
     ContentEditSheet(
         show = state.activeSheet is ReadBookSheet.ContentEdit,
         state = contentEditState,
@@ -304,6 +430,8 @@ fun ReadBookScreen(
             onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.PageKeyConfig))
         },
         onOpenTextSelectMenuConfig = onOpenTextSelectMenuConfig,
+        onPickBookmarkBadgeImage = onPickBookmarkBadgeImage,
+        onResetBookmarkBadge = onResetBookmarkBadge,
     )
     ReadAloudNumberConfigSheet(
         show = state.activeSheet is ReadBookSheet.PreDownloadConfig,
@@ -414,8 +542,8 @@ fun ReadBookScreen(
             data = coverPath,
             requestKey = requestKey,
         ) {
-            setParameter("sourceOrigin", sourceOrigin)
-            setParameter("loadOnlyWifi", loadOnlyWifi)
+            extras[CoverExtras.SourceOrigin] = sourceOrigin
+            extras[CoverExtras.LoadOnlyWifi] = loadOnlyWifi
         }
         rememberThemeOverride(seedColor)
     }
@@ -440,7 +568,6 @@ fun ReadBookScreen(
             )
             aloudPlayerViewModel.effects.collectLatest { effect ->
                 when (effect) {
-                    ReadAloudPlayerEffect.OpenToc -> onIntent(ReadBookIntent.OpenChapterList)
                     ReadAloudPlayerEffect.ReturnToReaderSettings ->
                         onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.ReadAloudConfig))
                     ReadAloudPlayerEffect.ReturnToClassic ->
@@ -473,6 +600,9 @@ fun ReadBookScreen(
             onDelete = { onIntent(ReadBookIntent.DeleteBookmark(it)) },
         )
     }
+
+    val showCharsetSheet = state.activeSheet is ReadBookSheet.Charset
+    val showSimulatedReadingSheet = state.activeSheet is ReadBookSheet.SimulatedReading
 
     // AlertDialog-based sheets and special cases — conditionally composed
     when (state.activeSheet) {
@@ -509,12 +639,14 @@ fun ReadBookScreen(
 
         is ReadBookSheet.Charset -> {
             CharsetConfigSheet(
+                show = showCharsetSheet,
                 onDismissRequest = dismissSheet,
             )
         }
 
         is ReadBookSheet.SimulatedReading -> {
             SimulatedReadingSheet(
+                show = showSimulatedReadingSheet,
                 onDismissRequest = dismissSheet,
                 onApply = { onIntent(ReadBookIntent.ApplySimulatedReading) },
             )
@@ -632,10 +764,4 @@ fun ReadBookScreen(
         // Sheets using AppModalBottomSheet are composed unconditionally above
         else -> {}
     }
-
-    ActionReminder(
-        reminder = if (state.menuVisible) null else state.activeReminder,
-        onAction = { reminder -> reminder.actionIntent?.let { onIntent(it) } },
-        onDismiss = { onIntent(ReadBookIntent.DismissReminder) },
-    )
 }

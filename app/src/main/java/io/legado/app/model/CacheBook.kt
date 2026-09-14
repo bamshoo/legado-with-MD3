@@ -9,12 +9,13 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookSource
 import io.legado.app.help.book.isLocal
+import io.legado.app.model.CacheBook.explicitFifo
 import io.legado.app.model.cache.CacheDownloadRequest
 import io.legado.app.model.cache.CacheDownloadStateStore
 import io.legado.app.model.cache.ChapterSelection
 import io.legado.app.model.cache.ExplicitCacheBookFifo
+import io.legado.app.domain.gateway.DownloadCacheSettingsGateway
 import io.legado.app.service.CacheBookService
-import io.legado.app.ui.config.otherConfig.OtherConfig
 import io.legado.app.utils.LogUtils
 import io.legado.app.utils.onEachParallel
 import kotlinx.coroutines.CompletableDeferred
@@ -38,6 +39,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.koin.core.context.GlobalContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -66,13 +68,15 @@ object CacheBook {
         private val processMutex = Mutex()
         private val workingState = MutableStateFlow(true)
 
+        private val cacheSettingsGateway get() = GlobalContext.get().get<DownloadCacheSettingsGateway>()
+
         fun setWorkingState(value: Boolean) {
             workingState.value = value
         }
 
         suspend fun startProcessJob(context: CoroutineContext) = processMutex.withLock {
             setWorkingState(true)
-            val concurrency = OtherConfig.cacheBookThreadCount.coerceIn(1, maxDownloadConcurrency)
+            val concurrency = cacheSettingsGateway.currentSettings.cacheBookThreadCount.coerceIn(1, maxDownloadConcurrency)
             flow {
                 while (currentCoroutineContext().isActive && taskMap.isNotEmpty() && !isPaused) {
                     if (!workingState.value) {
@@ -301,7 +305,11 @@ object CacheBook {
     fun start(context: Context, request: CacheDownloadRequest, isLocal: Boolean = false) {
         if (isLocal) return
         if (!request.hasValidSelection()) return
-        isPaused = false
+        // Reading preloads must obey a user-paused download queue. Manual and batch requests
+        // remain explicit resume actions.
+        if (request.source != io.legado.app.model.cache.CacheDownloadSource.ReadPreload) {
+            isPaused = false
+        }
         startCacheBookService(context) {
             action = IntentAction.start
             putRequestExtras(request)
@@ -321,7 +329,9 @@ object CacheBook {
         val finalRequests = validRequests.filterNot { it.bookUrl in localBookUrls }
         if (finalRequests.isEmpty()) return@withContext
 
-        isPaused = false
+        if (validRequests.any { it.source != io.legado.app.model.cache.CacheDownloadSource.ReadPreload }) {
+            isPaused = false
+        }
         // 如果请求较多，可以通过 Intent 传递一个特殊的标志让 Service 自己去检查队列，
         // 或者分批发送。这里我们先简单处理，但确保不在主线程做数据库查询。
         finalRequests.forEach { request ->

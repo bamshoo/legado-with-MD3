@@ -48,6 +48,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
+import io.legado.app.service.BookSourceCheckService
+import io.legado.app.ui.qrcode.QrCodeResult
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.widget.components.ActionItem
@@ -75,7 +77,6 @@ import io.legado.app.ui.widget.components.rules.RuleListScaffold
 import io.legado.app.ui.widget.components.settingItem.SwitchSettingItem
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.ui.widget.components.topbar.TopBarActionButton
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import org.koin.androidx.compose.koinViewModel
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -84,6 +85,9 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 @Composable
 fun BookSourceRouteScreen(
     viewModel: BookSourceViewModel = koinViewModel(),
+    initialImportUrl: String? = null,
+    closeAfterImport: Boolean = false,
+    onImportClosed: () -> Unit = {},
     onBackClick: () -> Unit,
     onAddSource: () -> Unit,
     onEditSource: (String) -> Unit,
@@ -91,17 +95,54 @@ fun BookSourceRouteScreen(
     onSearchSource: (String, String) -> Unit,
     onDebugSource: (String) -> Unit,
 ) {
+    LaunchedEffect(initialImportUrl) {
+        initialImportUrl?.let { viewModel.onIntent(BookSourceIntent.Import(it)) }
+    }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val clipboardManager = LocalClipboard.current
+    LaunchedEffect(viewModel) {
+        viewModel.effects.collectLatest { effect ->
+            when (effect) {
+                is BookSourceEffect.StartCheck -> {
+                    BookSourceCheckService.start(context, effect.ids, effect.keyword)
+                }
+
+                BookSourceEffect.CancelCheck -> BookSourceCheckService.stop(context)
+
+                BookSourceEffect.ImportFinished -> {
+                    if (closeAfterImport) onImportClosed()
+                }
+
+                is BookSourceEffect.ShowSnackbar -> {
+                    val result = snackbarHostState.showSnackbar(
+                        message = effect.message,
+                        actionLabel = effect.actionLabel,
+                        withDismissAction = true,
+                    )
+                    if (result == SnackbarResult.ActionPerformed && effect.url != null) {
+                        clipboardManager.setClipEntry(
+                            ClipEntry(ClipData.newPlainText("url", effect.url))
+                        )
+                    }
+                }
+            }
+        }
+    }
     BookSourceScreen(
-        state,
-        viewModel::onIntent,
-        onBackClick,
-        onAddSource,
-        onEditSource,
-        onLoginSource,
-        onSearchSource,
-        onDebugSource,
-        viewModel.effects,
+        state = state,
+        onIntent = viewModel::onIntent,
+        snackbarHostState = snackbarHostState,
+        onImportDismissed = {
+            if (closeAfterImport) onImportClosed()
+        },
+        onBackClick = onBackClick,
+        onAddSource = onAddSource,
+        onEditSource = onEditSource,
+        onLoginSource = onLoginSource,
+        onSearchSource = onSearchSource,
+        onDebugSource = onDebugSource,
     )
 }
 
@@ -110,13 +151,14 @@ fun BookSourceRouteScreen(
 fun BookSourceScreen(
     state: BookSourceUiState,
     onIntent: (BookSourceIntent) -> Unit,
+    snackbarHostState: SnackbarHostState,
+    onImportDismissed: () -> Unit = {},
     onBackClick: () -> Unit,
     onAddSource: () -> Unit,
     onEditSource: (String) -> Unit,
     onLoginSource: (String) -> Unit,
     onSearchSource: (String, String) -> Unit,
     onDebugSource: (String) -> Unit,
-    effects: Flow<BookSourceEffect>,
 ) {
     val context = LocalContext.current
     val rules = state.items
@@ -157,27 +199,7 @@ fun BookSourceScreen(
             }
         }
     }
-    val snackbarHostState = remember { SnackbarHostState() }
-    val clipboardManager = LocalClipboard.current
     val cancelLabel = stringResource(R.string.cancel)
-    LaunchedEffect(Unit) {
-        effects.collectLatest { effect ->
-            when (effect) {
-                is BookSourceEffect.ShowSnackbar -> {
-                    val result = snackbarHostState.showSnackbar(
-                        message = effect.message,
-                        actionLabel = effect.actionLabel,
-                        withDismissAction = true,
-                    )
-                    if (result == SnackbarResult.ActionPerformed && effect.url != null) {
-                        clipboardManager.setClipEntry(
-                            ClipEntry(ClipData.newPlainText("url", effect.url))
-                        )
-                    }
-                }
-            }
-        }
-    }
     LaunchedEffect(state.checkProgress) {
         val progress = state.checkProgress ?: return@LaunchedEffect
         val result = snackbarHostState.showSnackbar(
@@ -197,6 +219,10 @@ fun BookSourceScreen(
                     onIntent(BookSourceIntent.Import(reader.readText()))
                 }
             }
+        }
+    val qrCodeImport =
+        rememberLauncherForActivityResult(QrCodeResult()) { result ->
+            result?.let { onIntent(BookSourceIntent.Import(it)) }
         }
     val exportDocument =
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -225,7 +251,10 @@ fun BookSourceScreen(
     BatchImportDialog(
         title = stringResource(R.string.import_book_source),
         importState = state.importState,
-        onDismissRequest = { onIntent(BookSourceIntent.CancelImport) },
+        onDismissRequest = {
+            onIntent(BookSourceIntent.CancelImport)
+            onImportDismissed()
+        },
         onConfirm = { onIntent(BookSourceIntent.SaveImportedSources) },
         onToggleItem = { onIntent(BookSourceIntent.ToggleImportItem(it)) },
         onToggleAll = { onIntent(BookSourceIntent.ToggleImportAll(it)) },
@@ -239,7 +268,7 @@ fun BookSourceScreen(
         },
         topBarActions = {
             Box {
-                SmallPlainButton(
+                MediumTonalButton(
                     modifier = Modifier.minimumInteractiveComponentSize(),
                     icon = AppIcons.MoreVert,
                     contentDescription = stringResource(R.string.menu),
@@ -484,7 +513,7 @@ fun BookSourceScreen(
                 showExportSheet = true
             },
         ),
-        onDeleteSelected = { deleteIds = it as Set<String> },
+        onDeleteSelected = { deleteIds = @Suppress("UNCHECKED_CAST") (it as Set<String>) },
         dropDownMenuContent = { dismiss ->
             RoundDropdownMenuItem(
                 text = stringResource(R.string.group_manage),
@@ -500,6 +529,9 @@ fun BookSourceScreen(
                     )
                 )
                 })
+            RoundDropdownMenuItem(
+                text = stringResource(R.string.import_by_qr_code),
+                onClick = { dismiss(); qrCodeImport.launch(null) })
             RoundDropdownMenuItem(
                 text = stringResource(R.string.import_on_line),
                 onClick = { dismiss(); showOnlineImport = true })
@@ -607,10 +639,30 @@ fun BookSourceScreen(
                                 }
                             },
                             title = item.name,
-                            subtitle = listOfNotNull(
-                                item.group,
-                                item.checkMessage
-                            ).joinToString(" · ").ifBlank { null },
+                            supportingContent = if (
+                                item.group != null || item.checkMessage != null
+                            ) {
+                                {
+                                    Column {
+                                        item.group?.let { group ->
+                                            AppText(
+                                                text = group,
+                                                style = LegadoTheme.typography.bodySmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        item.checkMessage?.let { message ->
+                                            AppText(
+                                                text = message,
+                                                style = LegadoTheme.typography.bodySmall,
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                null
+                            },
                             isEnabled = item.enabled,
                             isSelected = item.id in selectedIds,
                             canReorder = canReorder,
@@ -627,7 +679,6 @@ fun BookSourceScreen(
                             contentDescription = itemDescription,
                             trailingAction = {
                                 SmallPlainButton(
-                                    modifier = Modifier.minimumInteractiveComponentSize(),
                                     icon = AppIcons.Edit,
                                     contentDescription = stringResource(R.string.edit),
                                     onClick = { onEditSource(item.id) },
@@ -764,7 +815,6 @@ private fun BookSourceItemMenu(
     var expanded by remember { mutableStateOf(false) }
     Box {
         SmallPlainButton(
-            modifier = Modifier.minimumInteractiveComponentSize(),
             icon = AppIcons.MoreVert,
             contentDescription = stringResource(R.string.menu),
             onClick = { expanded = true },

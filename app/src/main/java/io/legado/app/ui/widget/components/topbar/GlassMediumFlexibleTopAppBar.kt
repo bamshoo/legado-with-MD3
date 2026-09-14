@@ -1,11 +1,9 @@
 package io.legado.app.ui.widget.components.topbar
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
@@ -108,9 +106,15 @@ fun GlassMediumFlexibleTopAppBar(
                     title = title,
                     subtitle = subtitleText.orEmpty(),
                     navigationIcon = navigationIcon,
-                    actions = actions,
+                    actions = {
+                        TopBarActionsRow(
+                            modifier = Modifier.padding(end = miuixTopBarActionsEndPadding())
+                        ) { actions() }
+                    },
                     color = Color.Transparent,
                     defaultWindowInsetsPadding = false,
+                    navigationIconPadding = miuixTopBarSlotPadding(),
+                    actionIconPadding = miuixTopBarSlotPadding(),
                     scrollBehavior = (scrollBehavior as? MiuixGlassScrollBehavior)?.miuixBehavior
                 )
             }
@@ -135,9 +139,7 @@ fun GlassMediumFlexibleTopAppBar(
                         navigationIcon = navigationIcon,
                         actions = {
                             Box(modifier = Modifier.padding(end = 12.dp)) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) { actions() }
+                                TopBarActionsRow { actions() }
                             }
                         },
                         scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,
@@ -168,11 +170,7 @@ fun GlassMediumFlexibleTopAppBar(
                         navigationIcon = navigationIcon,
                         actions = {
                             Box(modifier = Modifier.padding(end = 12.dp)) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    actions()
-                                }
+                                TopBarActionsRow { actions() }
                             }
                         },
                         scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,

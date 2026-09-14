@@ -23,10 +23,10 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
-import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Save
@@ -55,7 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
-import io.legado.app.ui.book.changecover.ChangeCoverDialog
+import io.legado.app.ui.book.info.ChangeCoverSheet
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.fadingEdge
 import io.legado.app.ui.widget.components.AppScaffold
@@ -72,10 +72,10 @@ import io.legado.app.ui.widget.components.text.AnimatedTextLine
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.ui.widget.components.topbar.GlassMediumFlexibleTopAppBar
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarDefaults
+import io.legado.app.ui.widget.components.topbar.TopBarActionButton
 import io.legado.app.ui.widget.components.topbar.TopBarNavigationButton
 import io.legado.app.utils.SelectImageContract
 import io.legado.app.utils.launch
-import io.legado.app.utils.showDialogFragment
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -104,9 +104,10 @@ fun BookInfoEditScreen(
                     )
                 },
                 actions = {
-                    TopBarNavigationButton(
+                    TopBarActionButton(
                         onClick = { viewModel.save(onSave) },
-                        imageVector = Icons.Default.Save
+                        imageVector = Icons.Default.Save,
+                        contentDescription = stringResource(R.string.save)
                     )
                 },
                 scrollBehavior = scrollBehavior
@@ -145,6 +146,17 @@ fun BookInfoEditContent(
     onOpenEventList: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    var showChangeCoverSheet by remember { mutableStateOf(false) }
+    ChangeCoverSheet(
+        show = showChangeCoverSheet,
+        name = uiState.name,
+        author = uiState.author,
+        onDismissRequest = { showChangeCoverSheet = false },
+        onSelect = { coverUrl ->
+            viewModel.onCoverUrlChange(coverUrl)
+            showChangeCoverSheet = false
+        },
+    )
 
     val selectCover = rememberLauncherForActivityResult(SelectImageContract()) {
         it.uri?.let { uri ->
@@ -174,14 +186,7 @@ fun BookInfoEditContent(
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     MediumOutlinedButton(
-                        onClick = {
-                            (context as? BookInfoEditActivity)?.showDialogFragment(
-                                ChangeCoverDialog(
-                                    uiState.name,
-                                    uiState.author
-                                )
-                            )
-                        },
+                        onClick = { showChangeCoverSheet = true },
                         icon = Icons.Default.ImageSearch,
                         contentDescription = stringResource(R.string.refresh_cover)
                     )

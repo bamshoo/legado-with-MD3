@@ -32,7 +32,8 @@ data class BookInfoUiState(
     val readRecordTotalTime: Long = 0L,
     val readRecordTimelineDays: List<ReadRecordTimelineDay> = emptyList(),
     val inBookshelf: Boolean = false,
-    val bookSource: BookInfoSourceUi? = null,
+    val bookSource: BookSource? = null,
+    val bookSourceUi: BookInfoSourceUi? = null,
     val relatedBooks: ImmutableList<RelatedBooksUi> = persistentListOf(),
     val characters: ImmutableList<BookInfoCharacterUi> = persistentListOf(),
     val knowledgeEntries: ImmutableList<BookInfoKnowledgeUi> = persistentListOf(),
@@ -73,7 +74,7 @@ data class BookInfoBookUi(
     val durChapterIndex: Int,
     val durChapterPos: Int,
     val remark: String?,
-    val displayIntro: String?,
+    val intro: String?,
 )
 
 @Stable
@@ -215,6 +216,15 @@ sealed interface BookInfoIntent {
     data object KnowledgeListClick : BookInfoIntent
     data object EventListClick : BookInfoIntent
     data class SetDefaultBookTreeUri(val value: String) : BookInfoIntent
+
+    /** 简介 HTML 中 `<button>名称@onclick:脚本</button>` 的点击。 */
+    data class IntroButtonClick(val name: String, val click: String) : BookInfoIntent
+
+    /** 简介 HTML 图片携带 {"click":"脚本"} 参数时的点击。 */
+    data class IntroImageClick(val click: String) : BookInfoIntent
+
+    /** 简介 HTML 图片长按。 */
+    data class IntroImageLongClick(val source: String) : BookInfoIntent
 }
 
 sealed interface BookInfoEffect {
@@ -274,6 +284,14 @@ sealed interface BookInfoEffect {
 
     data class OpenEventList(
         val bookUrl: String,
+    ) : BookInfoEffect
+
+    /** 简介按钮/图片触发的书源 JS 执行，由宿主（持有 Activity）用 SourceLoginJsExtensions 运行。 */
+    data class RunIntroJs(
+        val name: String,
+        val click: String,
+        val source: BookSource?,
+        val book: Book,
     ) : BookInfoEffect
 }
 

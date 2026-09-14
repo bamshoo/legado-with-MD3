@@ -3,7 +3,6 @@ package io.legado.app.ui.main
 import android.content.Intent
 import android.os.Build
 import androidx.activity.ComponentActivity
-import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
@@ -71,7 +70,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.chrisbanes.haze.HazeState
@@ -99,14 +98,10 @@ import io.legado.app.ui.widget.components.navigation.AppNavigationBar
 import io.legado.app.ui.widget.components.navigation.AppNavigationBarItem
 import io.legado.app.ui.widget.components.pager.rememberPagerFlingPassThroughConnection
 import io.legado.app.ui.widget.components.text.AppText
-import io.legado.app.ui.widget.dialog.TextDialog
 import io.legado.app.utils.sendToClip
-import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.startActivityForBook
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
 import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.basic.NavigationRailDefaults
@@ -133,8 +128,8 @@ fun MainScreen(
     onNavigateToLocalImport: () -> Unit,
     onNavigateToCache: (Long) -> Unit,
     onNavigateToBookCacheManage: () -> Unit,
-    onNavigateToFanqie: () -> Unit,
-    onOpenBookshelfBook: (BookShelfItem) -> Unit,
+onNavigateToFanqie: () -> Unit,
+    onOpenBookshelfBook: (BookShelfItem, String?) -> Unit,
     onNavigateToBackupSettings: () -> Unit,
     onNavigateToBookInfo: (name: String, author: String, bookUrl: String, origin: String?, coverPath: String?, sharedCoverKey: String?) -> Unit,
     onNavigateToExploreShow: (title: String?, sourceUrl: String, exploreUrl: String?) -> Unit,
@@ -162,7 +157,6 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val defaultHelpTitle = stringResource(R.string.help)
 
     LaunchedEffect(effects, context) {
         effects.collectLatest { effect ->
@@ -174,18 +168,6 @@ fun MainScreen(
                 }
 
                 is MainEffect.CopyUrl -> context.sendToClip(effect.url)
-                is MainEffect.ShowMarkdown -> {
-                    val activity = context as? AppCompatActivity ?: return@collectLatest
-                    val title = effect.title.ifBlank { defaultHelpTitle }
-                    val mdText = withContext(Dispatchers.IO) {
-                        context.assets
-                            .open("web/help/md/${effect.path}.md")
-                            .bufferedReader()
-                            .use { it.readText() }
-                    }
-                    activity.showDialogFragment(TextDialog(title, mdText, TextDialog.Mode.MD))
-                }
-
                 is MainEffect.StartActivity -> {
                     context.startActivity(Intent(context, effect.destination).apply {
                         effect.configTag?.let { putExtra("configTag", it) }
@@ -483,7 +465,8 @@ fun MainScreen(
                                 ),
                                 m3ShowLabel = showLabel,
                                 m3AlwaysShowLabel = alwaysShowLabel,
-                                useCustomIcon = customIconPath.isNotEmpty()
+                                useCustomIcon =
+                                    customIconPath.isNotEmpty() || selectedCustomIconPath.isNotEmpty(),
                             )
                         }
                     }
@@ -553,8 +536,8 @@ fun MainScreen(
                                         bookshelfScrollToTopRequest = 0L
                                     }
                                 },
-                                onBookClick = { book ->
-                                    onOpenBookshelfBook(book)
+                                onBookClick = { book, sharedCoverKey ->
+                                    onOpenBookshelfBook(book, sharedCoverKey)
                                 },
                                 onBookLongClick = { book, sharedCoverKey ->
                                     onNavigateToBookInfo(

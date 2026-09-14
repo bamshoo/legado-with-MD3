@@ -9,6 +9,7 @@ import io.legado.app.domain.gateway.BookKnowledgeGateway
 import io.legado.app.domain.model.AiGenerateRequest
 import io.legado.app.domain.model.AiMessage
 import io.legado.app.domain.model.AiMessageRole
+import io.legado.app.domain.model.AiReasoningLevel
 import io.legado.app.domain.model.AiTaskType
 import io.legado.app.domain.model.AiToolContext
 import io.legado.app.utils.GSON
@@ -17,7 +18,7 @@ import io.legado.app.utils.fromJsonArray
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 class IdentifyBookCharactersUseCase(
     private val aiProfileGateway: AiProfileGateway,
@@ -66,7 +67,10 @@ class IdentifyBookCharactersUseCase(
         taskType = AiTaskType.IDENTIFY_CHARACTERS,
     )
 
-    suspend fun start(bookUrl: String): String {
+    suspend fun start(
+        bookUrl: String,
+        reasoningLevel: AiReasoningLevel = AiReasoningLevel.AUTO,
+    ): String {
         val identifyPreset = aiProfileGateway.getTaskPreset(AiTaskType.IDENTIFY_CHARACTERS)
         val preset = identifyPreset
             ?: aiProfileGateway.getTaskPreset(AiTaskType.CHAT)
@@ -88,7 +92,7 @@ class IdentifyBookCharactersUseCase(
         )
         return aiTaskManager.submit(artifact) {
             var candidates = emptyList<Candidate>()
-            identifyStream(bookUrl).collect { progress ->
+            identifyStream(bookUrl, reasoningLevel).collect { progress ->
                 when (progress) {
                     is Progress.Reasoning -> appendReasoning(progress.text)
                     is Progress.ToolCall -> reportToolCall(progress.name)
@@ -102,7 +106,10 @@ class IdentifyBookCharactersUseCase(
     fun decodeCandidates(output: String?): List<Candidate> =
         output?.let { GSON.fromJsonArray<Candidate>(it).getOrNull() }.orEmpty()
 
-    fun identifyStream(bookUrl: String): Flow<Progress> = flow {
+    fun identifyStream(
+        bookUrl: String,
+        reasoningLevel: AiReasoningLevel = AiReasoningLevel.AUTO,
+    ): Flow<Progress> = flow {
         val identifyPreset = aiProfileGateway.getTaskPreset(AiTaskType.IDENTIFY_CHARACTERS)
         val preset = identifyPreset
             ?: aiProfileGateway.getTaskPreset(AiTaskType.CHAT)
@@ -119,7 +126,11 @@ class IdentifyBookCharactersUseCase(
                         "识别本书已下载章节中的人物。请先用工具读取已缓存章节，再只返回要求的 JSON。"
                     ),
                 ),
-                params = preset.params.copy(temperature = 0f),
+                params = preset.params.copy(
+                    temperature = 0f,
+                    reasoningLevel = reasoningLevel.takeUnless { it == AiReasoningLevel.AUTO }
+                        ?: preset.params.reasoningLevel,
+                ),
                 toolContext = AiToolContext(bookUrl = bookUrl),
             )
         ).collect { event ->
@@ -183,7 +194,7 @@ class IdentifyBookCharactersUseCase(
             val existing = bookKnowledgeGateway.getCharacterProfile(bookUrl, candidate.name)
             bookKnowledgeGateway.upsertCharacterProfile(
                 BookCharacterProfile(
-                    id = existing?.id ?: UUID.randomUUID().toString(),
+                    id = existing?.id ?: Uuid.random().toString(),
                     bookUrl = bookUrl,
                     name = candidate.name,
                     aliasesJson = GSON.toJson(

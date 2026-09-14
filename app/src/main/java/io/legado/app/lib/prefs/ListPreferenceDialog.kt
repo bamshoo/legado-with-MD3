@@ -8,6 +8,8 @@ import io.legado.app.utils.applyEInkBorderIfNeeded
 
 class ListPreferenceDialog : ListPreferenceDialogFragmentCompat() {
 
+    private val themeSettingsGateway get() = org.koin.core.context.GlobalContext.get().get<io.legado.app.domain.gateway.ThemeSettingsGateway>()
+
     companion object {
 
         fun newInstance(key: String?): ListPreferenceDialog {
@@ -38,7 +40,7 @@ class ListPreferenceDialog : ListPreferenceDialogFragmentCompat() {
 
     override fun onStart() {
         super.onStart()
-        dialog?.applyEInkBorderIfNeeded()
+dialog?.applyEInkBorderIfNeeded()
     }
 
 }

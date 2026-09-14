@@ -8,6 +8,8 @@ import io.legado.app.utils.applyEInkBorderIfNeeded
 
 class MultiSelectListPreferenceDialog : MultiSelectListPreferenceDialogFragmentCompat() {
 
+    private val themeSettingsGateway get() = org.koin.core.context.GlobalContext.get().get<io.legado.app.domain.gateway.ThemeSettingsGateway>()
+
     companion object {
 
         fun newInstance(key: String?): MultiSelectListPreferenceDialog {
@@ -40,7 +42,7 @@ class MultiSelectListPreferenceDialog : MultiSelectListPreferenceDialogFragmentC
 
     override fun onStart() {
         super.onStart()
-        dialog?.applyEInkBorderIfNeeded()
+dialog?.applyEInkBorderIfNeeded()
     }
 
 }

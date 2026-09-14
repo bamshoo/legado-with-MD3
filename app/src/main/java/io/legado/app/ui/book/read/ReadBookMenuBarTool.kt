@@ -42,7 +42,7 @@ import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberBackdrop
@@ -59,7 +59,7 @@ import io.legado.app.ui.animation.DampedDragAnimation
 import io.legado.app.ui.book.read.sheet.ReadMenuButtonInfo
 import io.legado.app.ui.book.read.sheet.readMenuButtonInfos
 import io.legado.app.ui.theme.LegadoTheme
-import io.legado.app.ui.widget.components.AppSlider
+import io.legado.app.ui.widget.components.reader.ReaderMenuSlider as BaseReaderMenuSlider
 import kotlin.math.roundToInt
 
 @Composable
@@ -97,7 +97,7 @@ internal fun ReadMenuSlider(
 
     val commitAction = onValueChangeFinished ?: onValueCommit?.let { commit -> { commit(value) } }
 
-    AppSlider(
+    BaseReaderMenuSlider(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier.padding(horizontal = 5.dp),

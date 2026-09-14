@@ -125,6 +125,9 @@ class ReadSettingsRepository(
     suspend fun setUseNewTocSheet(value: Boolean) =
         settingsRepository.putBoolean(PreferKey.useNewTocSheet, value)
 
+    suspend fun setMaxLengthWithNoToc(value: Int) =
+        settingsRepository.putInt(PreferKey.maxLengthWithNoToc, value)
+
     suspend fun setSelectVibrator(value: Boolean) =
         settingsRepository.putBoolean(PreferKey.selectVibrator, value)
 
@@ -133,6 +136,12 @@ class ReadSettingsRepository(
 
     suspend fun setAutoSuggestDayNight(value: Boolean) =
         settingsRepository.putBoolean(PreferKey.autoSuggestDayNight, value)
+
+    suspend fun setReadingAnchorEnabled(value: Boolean) =
+        settingsRepository.putBoolean(PreferKey.readingAnchorEnabled, value)
+
+    suspend fun setReadAloudDetachReminderEnabled(value: Boolean) =
+        settingsRepository.putBoolean(PreferKey.readAloudDetachReminderEnabled, value)
 
     suspend fun setSelectText(value: Boolean) =
         settingsRepository.putBoolean(PreferKey.selectText, value)
@@ -260,6 +269,9 @@ class ReadSettingsRepository(
     suspend fun setReadMenuTopBarLiquidGlassButtons(value: Boolean) =
         settingsRepository.putBoolean(PreferKey.readMenuTopBarLiquidGlassButtons, value)
 
+    suspend fun setReadMenuTopBarMergeButtons(value: Boolean) =
+        settingsRepository.putBoolean(PreferKey.readMenuTopBarMergeButtons, value)
+
     suspend fun setReadMenuTopBarTitleCapsule(value: Boolean) =
         settingsRepository.putBoolean(PreferKey.readMenuTopBarTitleCapsule, value)
 
@@ -359,12 +371,18 @@ class ReadSettingsRepository(
             volumeKeyPage = compatDsValue(Keys.VolumeKeyPage, true),
             volumeKeyPageOnPlay = compatDsValue(Keys.VolumeKeyPageOnPlay, true),
             keyPageOnLongPress = compatDsValue(Keys.KeyPageOnLongPress, false),
+            swipeToAddBookmark = compatDsValue(Keys.SwipeToAddBookmark, false),
+            bookmarkBadgeImage = compatDsValue(Keys.BookmarkBadgeImage, ""),
+            bookmarkBadgeSize = compatDsValue(Keys.BookmarkBadgeSize, 10),
             pageTouchSlop = compatDsValue(Keys.PageTouchSlop, 0),
             sliderVibrator = compatDsValue(Keys.SliderVibrator, false),
             useNewTocSheet = compatDsValue(Keys.UseNewTocSheet, true),
+            maxLengthWithNoToc = compatDsValue(Keys.MaxLengthWithNoToc, 3000),
             selectVibrator = compatDsValue(Keys.SelectVibrator, false),
             autoChangeSource = compatDsValue(Keys.AutoChangeSource, true),
             autoSuggestDayNight = compatDsValue(Keys.AutoSuggestDayNight, false),
+            readingAnchorEnabled = compatDsValue(Keys.ReadingAnchorEnabled, true),
+            readAloudDetachReminderEnabled = compatDsValue(Keys.ReadAloudDetachReminderEnabled, false),
             selectText = compatDsValue(Keys.SelectText, true),
             noAnimScrollPage = compatDsValue(Keys.NoAnimScrollPage, false),
             clickImgWay = compatDsValue(Keys.ClickImgWay, "2"),
@@ -416,6 +434,7 @@ class ReadSettingsRepository(
             readMenuTopBarBlurMode = compatDsValue(Keys.ReadMenuTopBarBlurMode, ReadMenuBlurMode.None),
             readMenuBottomBarBlurMode = compatDsValue(Keys.ReadMenuBottomBarBlurMode, ReadMenuBlurMode.None),
             readMenuTopBarLiquidGlassButtons = compatDsValue(Keys.ReadMenuTopBarLiquidGlassButtons, false),
+            readMenuTopBarMergeButtons = compatDsValue(Keys.ReadMenuTopBarMergeButtons, false),
             readMenuTopBarTitleCapsule = compatDsValue(Keys.ReadMenuTopBarTitleCapsule, false),
             readMenuBottomBarLiquidGlassButtons = compatDsValue(Keys.ReadMenuBottomBarLiquidGlassButtons, false),
             readMenuFloatingIconLiquidGlass = compatDsValue(
@@ -428,7 +447,7 @@ class ReadSettingsRepository(
             ),
             readMenuBottomBarBlurStyle = compatDsValue(Keys.ReadMenuBottomBarBlurStyle, ReadMenuBlurStyle.Solid),
             readMenuBlurRadius = compatDsValue(Keys.ReadMenuBlurRadius, 24),
-            readMenuBlurAlpha = compatDsValue(Keys.ReadMenuBlurAlpha, 100),
+            readMenuBlurAlpha = compatDsValue(Keys.ReadMenuBlurAlpha, 85),
             readMenuBlurColor = compatDsValue(Keys.ReadMenuBlurColor, 0),
             readMenuBlurColorNight = compatDsValue(Keys.ReadMenuBlurColorNight, 0),
             readMenuPaletteStyle = compatDsValue(Keys.ReadMenuPaletteStyle, ""),
@@ -473,12 +492,18 @@ class ReadSettingsRepository(
         val VolumeKeyPage = booleanPreferencesKey(PreferKey.volumeKeyPage)
         val VolumeKeyPageOnPlay = booleanPreferencesKey(PreferKey.volumeKeyPageOnPlay)
         val KeyPageOnLongPress = booleanPreferencesKey(PreferKey.keyPageOnLongPress)
+        val SwipeToAddBookmark = booleanPreferencesKey(PreferKey.swipeToAddBookmark)
+        val BookmarkBadgeImage = stringPreferencesKey(PreferKey.bookmarkBadgeImage)
+        val BookmarkBadgeSize = intPreferencesKey(PreferKey.bookmarkBadgeSize)
         val PageTouchSlop = intPreferencesKey(PreferKey.pageTouchSlop)
         val SliderVibrator = booleanPreferencesKey(PreferKey.sliderVibrator)
         val UseNewTocSheet = booleanPreferencesKey(PreferKey.useNewTocSheet)
+        val MaxLengthWithNoToc = intPreferencesKey(PreferKey.maxLengthWithNoToc)
         val SelectVibrator = booleanPreferencesKey(PreferKey.selectVibrator)
         val AutoChangeSource = booleanPreferencesKey(PreferKey.autoChangeSource)
         val AutoSuggestDayNight = booleanPreferencesKey(PreferKey.autoSuggestDayNight)
+        val ReadingAnchorEnabled = booleanPreferencesKey(PreferKey.readingAnchorEnabled)
+        val ReadAloudDetachReminderEnabled = booleanPreferencesKey(PreferKey.readAloudDetachReminderEnabled)
         val SelectText = booleanPreferencesKey(PreferKey.selectText)
         val NoAnimScrollPage = booleanPreferencesKey(PreferKey.noAnimScrollPage)
         val ClickImgWay = stringPreferencesKey(PreferKey.clickImgWay)
@@ -531,6 +556,8 @@ class ReadSettingsRepository(
         val ReadMenuBottomBarBlurMode = intPreferencesKey(PreferKey.readMenuBottomBarBlurMode)
         val ReadMenuTopBarLiquidGlassButtons =
             booleanPreferencesKey(PreferKey.readMenuTopBarLiquidGlassButtons)
+        val ReadMenuTopBarMergeButtons =
+            booleanPreferencesKey(PreferKey.readMenuTopBarMergeButtons)
         val ReadMenuTopBarTitleCapsule =
             booleanPreferencesKey(PreferKey.readMenuTopBarTitleCapsule)
         val ReadMenuBottomBarLiquidGlassButtons =
@@ -596,12 +623,18 @@ internal fun ReadSettings.toGatewayPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.volumeKeyPage to volumeKeyPage,
     PreferKey.volumeKeyPageOnPlay to volumeKeyPageOnPlay,
     PreferKey.keyPageOnLongPress to keyPageOnLongPress,
+    PreferKey.swipeToAddBookmark to swipeToAddBookmark,
+    PreferKey.bookmarkBadgeImage to bookmarkBadgeImage,
+    PreferKey.bookmarkBadgeSize to bookmarkBadgeSize,
     PreferKey.pageTouchSlop to pageTouchSlop,
     PreferKey.sliderVibrator to sliderVibrator,
     PreferKey.useNewTocSheet to useNewTocSheet,
+    PreferKey.maxLengthWithNoToc to maxLengthWithNoToc,
     PreferKey.selectVibrator to selectVibrator,
     PreferKey.autoChangeSource to autoChangeSource,
     PreferKey.autoSuggestDayNight to autoSuggestDayNight,
+    PreferKey.readingAnchorEnabled to readingAnchorEnabled,
+    PreferKey.readAloudDetachReminderEnabled to readAloudDetachReminderEnabled,
     PreferKey.selectText to selectText,
     PreferKey.noAnimScrollPage to noAnimScrollPage,
     PreferKey.clickImgWay to clickImgWay,
@@ -653,6 +686,7 @@ internal fun ReadSettings.toGatewayPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.readMenuTopBarBlurMode to readMenuTopBarBlurMode,
     PreferKey.readMenuBottomBarBlurMode to readMenuBottomBarBlurMode,
     PreferKey.readMenuTopBarLiquidGlassButtons to readMenuTopBarLiquidGlassButtons,
+    PreferKey.readMenuTopBarMergeButtons to readMenuTopBarMergeButtons,
     PreferKey.readMenuTopBarTitleCapsule to readMenuTopBarTitleCapsule,
     PreferKey.readMenuBottomBarLiquidGlassButtons to readMenuBottomBarLiquidGlassButtons,
     PreferKey.readMenuFloatingIconLiquidGlass to readMenuFloatingIconLiquidGlass,

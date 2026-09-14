@@ -1,7 +1,9 @@
 package io.legado.app.ui.book.source.manage
 
 import android.app.Application
+import android.net.Uri
 import android.text.TextUtils
+import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.JsonParser
@@ -11,11 +13,13 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.BookSourcePart
 import io.legado.app.data.repository.BookSourceRepository
 import io.legado.app.data.repository.UploadRepository
+import io.legado.app.domain.gateway.BookSourceCheckFailure
 import io.legado.app.domain.gateway.BookSourceCheckGateway
+import io.legado.app.domain.gateway.BookSourceCheckResult
+import io.legado.app.domain.gateway.BookSourceCheckStatus
 import io.legado.app.domain.gateway.CheckSourceSettings
 import io.legado.app.domain.gateway.CheckSourceSettingsGateway
 import io.legado.app.domain.gateway.OtherSettingsGateway
-import io.legado.app.domain.usecase.StartBookSourceCheckUseCase
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.http.decompressed
 import io.legado.app.help.http.newCallResponseBody
@@ -29,14 +33,15 @@ import io.legado.app.utils.GSON
 import io.legado.app.utils.NetworkUtils
 import io.legado.app.utils.fromJsonArray
 import io.legado.app.utils.fromJsonObject
+import io.legado.app.utils.inputStream
 import io.legado.app.utils.isAbsUrl
 import io.legado.app.utils.isJsonArray
 import io.legado.app.utils.isJsonObject
+import io.legado.app.utils.isUri
 import io.legado.app.utils.splitNotBlank
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableSet
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -55,7 +60,6 @@ class BookSourceViewModel(
     private val otherSettingsGateway: OtherSettingsGateway,
     private val checkGateway: BookSourceCheckGateway,
     private val checkSettingsGateway: CheckSourceSettingsGateway,
-    private val startBookSourceCheck: StartBookSourceCheckUseCase,
 ) : ViewModel() {
     companion object {
         const val FILTER_ENABLED = "@enabled"
@@ -80,51 +84,85 @@ class BookSourceViewModel(
         MutableStateFlow<BaseImportUiState<BookSource>>(BaseImportUiState.Idle)
     private val _effects = MutableSharedFlow<BookSourceEffect>(extraBufferCapacity = 16)
     val effects = _effects.asSharedFlow()
-    private var checkJob: Job? = null
 
     init {
         viewModelScope.launch {
             var wasRunning = false
             checkGateway.state.collect { state ->
                 if (wasRunning && !state.isRunning) {
-                    _effects.tryEmit(BookSourceEffect.ShowSnackbar("书源校验完成"))
+                    val message = if (state.cancelledCount > 0) {
+                        application.getString(
+                            io.legado.app.R.string.book_source_check_cancelled,
+                            state.succeededCount,
+                            state.failedCount,
+                            state.cancelledCount,
+                        )
+                    } else {
+                        application.getString(
+                            io.legado.app.R.string.book_source_check_completed,
+                            state.succeededCount,
+                            state.failedCount,
+                        )
+                    }
+                    _effects.tryEmit(BookSourceEffect.ShowSnackbar(message))
                 }
                 wasRunning = state.isRunning
             }
         }
     }
 
-    private val listState = combine(
+    private val sourceFilter = combine(searchKey, filter) { query, activeFilter ->
+        SourceFilter(query, activeFilter)
+    }
+
+    private val sourceSort = combine(sort, sortAscending, groupByDomain) {
+            activeSort,
+            ascending,
+            byDomain,
+        ->
+        SourceSort(activeSort, ascending, byDomain)
+    }
+
+    private val importedOrFilteredItems = combine(
         repository.flowAll(),
-        repository.flowGroups(),
-        searchKey,
-        isSearchMode,
-        filter,
-        selectedIds,
-        sort,
-        sortAscending,
-        groupByDomain,
         localItems,
-        enabledOverrides,
-    ) { values ->
-        @Suppress("UNCHECKED_CAST")
-        val sourceItems = (values[0] as List<BookSourcePart>)
-        val groups = values[1] as List<String>
-        val query = values[2] as String
-        val searchMode = values[3] as Boolean
-        val activeFilter = values[4] as String?
-        val selected = values[5] as Set<String>
-        val activeSort = values[6] as BookSourceSort
-        val ascending = values[7] as Boolean
-        val byDomain = values[8] as Boolean
-        val local = values[9] as List<BookSourcePart>?
-        val pendingEnabled = values[10] as Map<String, Boolean>
-        val visible = if (local == null) {
-            sourceItems.filterFor(activeFilter, query).sortFor(activeSort, ascending, byDomain)
+        sourceFilter,
+    ) { sourceItems, local, activeFilter ->
+        if (local == null) {
+            sourceItems.filterFor(activeFilter.name, activeFilter.query)
         } else {
             val latestById = sourceItems.associateBy { it.bookSourceUrl }
             local.mapNotNull { latestById[it.bookSourceUrl] }
         }
+    }
+
+    private val visibleItems = combine(importedOrFilteredItems, localItems, sourceSort) {
+            items,
+            local,
+            activeSort,
+        ->
+        if (local == null) {
+            items.sortFor(activeSort.sort, activeSort.ascending, activeSort.groupByDomain)
+        } else {
+            items
+        }
+    }
+
+    private val listConfiguration = combine(
+        sourceFilter,
+        isSearchMode,
+        selectedIds,
+        sourceSort,
+        enabledOverrides,
+    ) { activeFilter, searchMode, selected, activeSort, pendingEnabled ->
+        ListConfiguration(activeFilter, searchMode, selected, activeSort, pendingEnabled)
+    }
+
+    private val listState = combine(
+        visibleItems,
+        repository.flowGroups(),
+        listConfiguration,
+    ) { visible, groups, configuration ->
         BookSourceUiState(
             items = visible.map { source ->
                 BookSourceItemUi(
@@ -132,26 +170,47 @@ class BookSourceViewModel(
                     domain = NetworkUtils.getSubDomainOrNull(source.bookSourceUrl) ?: "#",
                     name = source.bookSourceName,
                     group = source.bookSourceGroup,
-                    enabled = pendingEnabled[source.bookSourceUrl] ?: source.enabled,
+                    enabled = configuration.enabledOverrides[source.bookSourceUrl] ?: source.enabled,
                     enabledExplore = source.enabledExplore,
                     hasLoginUrl = source.hasLoginUrl,
                     hasExploreUrl = source.hasExploreUrl,
                     customOrder = source.customOrder,
                 )
             }.toImmutableList(),
-            selectedIds = selected.intersect(visible.map { it.bookSourceUrl }.toSet())
+            selectedIds = configuration.selectedIds.intersect(visible.map { it.bookSourceUrl }.toSet())
                 .toImmutableSet(),
-            searchKey = query,
-            groupFilterName = activeFilter?.displayName(application),
-            activeFilter = activeFilter,
+            searchKey = configuration.filter.query,
+            groupFilterName = configuration.filter.name?.displayName(application),
+            activeFilter = configuration.filter.name,
             groups = groups.toImmutableList(),
-            sort = activeSort,
-            sortAscending = ascending,
-            groupByDomain = byDomain,
-            interaction = io.legado.app.ui.widget.components.list.InteractionState(isSearchMode = searchMode),
+            sort = configuration.sort.sort,
+            sortAscending = configuration.sort.ascending,
+            groupByDomain = configuration.sort.groupByDomain,
+            interaction = io.legado.app.ui.widget.components.list.InteractionState(
+                isSearchMode = configuration.isSearchMode,
+            ),
         )
     }.flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BookSourceUiState())
+
+    private data class SourceFilter(
+        val query: String,
+        val name: String?,
+    )
+
+    private data class SourceSort(
+        val sort: BookSourceSort,
+        val ascending: Boolean,
+        val groupByDomain: Boolean,
+    )
+
+    private data class ListConfiguration(
+        val filter: SourceFilter,
+        val isSearchMode: Boolean,
+        val selectedIds: Set<String>,
+        val sort: SourceSort,
+        val enabledOverrides: Map<String, Boolean>,
+    )
 
     val uiState = combine(
         listState,
@@ -160,7 +219,11 @@ class BookSourceViewModel(
         checkSettingsGateway.settings,
     ) { state, importing, check, settings ->
         state.copy(
-            items = state.items.map { it.copy(checkMessage = check.results[it.id]) }
+            items = state.items.map { item ->
+                item.copy(
+                    checkMessage = check.results[item.id]?.displayMessage(application)
+                )
+            }
                 .toImmutableList(),
             importState = importing,
             checkProgress = if (check.isRunning) application.getString(
@@ -229,10 +292,16 @@ class BookSourceViewModel(
             is BookSourceIntent.DeleteGroup -> updateGroup(intent.group, "")
             is BookSourceIntent.CheckSelectedInterval -> checkInterval(intent.ids)
             is BookSourceIntent.StartCheck -> {
-                if (checkJob?.isActive != true) {
-                    checkJob = viewModelScope.launch {
+                if (checkGateway.state.value.isRunning) {
+                    _effects.tryEmit(
+                        BookSourceEffect.ShowSnackbar(
+                            application.getString(io.legado.app.R.string.source_already_checking)
+                        )
+                    )
+                } else {
+                    viewModelScope.launch {
                         checkSettingsGateway.update(intent.options.toSettings())
-                        startBookSourceCheck(intent.ids, intent.keyword)
+                        _effects.emit(BookSourceEffect.StartCheck(intent.ids, intent.keyword))
                     }
                 }
             }
@@ -241,7 +310,7 @@ class BookSourceViewModel(
                 checkSettingsGateway.update(intent.options.toSettings())
             }
 
-            BookSourceIntent.CancelCheck -> checkJob?.cancel()
+            BookSourceIntent.CancelCheck -> _effects.tryEmit(BookSourceEffect.CancelCheck)
             is BookSourceIntent.Import -> importSources(intent.text)
             is BookSourceIntent.Export -> exportSources(intent.uri, intent.ids)
             is BookSourceIntent.Upload -> uploadSources(intent.ids)
@@ -378,6 +447,10 @@ class BookSourceViewModel(
                             )
                         } else url(input)
                     }.decompressed().text("utf-8")
+                } else if (input.isUri()) {
+                    input.toUri().inputStream(application).getOrThrow()
+                        .bufferedReader()
+                        .use { it.readText() }
                 } else input
                 val sources = parseImportSources(text)
                 val settings = otherSettingsGateway.currentSettings
@@ -495,11 +568,12 @@ class BookSourceViewModel(
             SourceHelp.insertBookSource(*sources.toTypedArray())
             ContentProcessor.upReplaceRules()
             importState.value = BaseImportUiState.Idle
+            _effects.tryEmit(BookSourceEffect.ImportFinished)
             _effects.tryEmit(BookSourceEffect.ShowSnackbar("导入完成"))
         }
     }
 
-    private fun exportSources(uri: android.net.Uri, ids: Set<String>) = launch {
+    private fun exportSources(uri: Uri, ids: Set<String>) = launch {
         runCatching {
             val selected = repository.getAll().filter { ids.isEmpty() || it.bookSourceUrl in ids }
             application.contentResolver.openOutputStream(uri)?.bufferedWriter()
@@ -540,6 +614,48 @@ private fun BookSourceCheckOptionsUi.toSettings() = CheckSourceSettings(
     checkCategory = checkCategory,
     checkContent = checkContent,
 )
+
+private fun BookSourceCheckResult.displayMessage(application: Application): String {
+    val errorDetail = detail ?: application.getString(io.legado.app.R.string.unknown_error)
+    return when (status) {
+        BookSourceCheckStatus.Pending -> application.getString(
+            io.legado.app.R.string.book_source_check_waiting
+        )
+
+        BookSourceCheckStatus.Running -> application.getString(
+            io.legado.app.R.string.book_source_check_running
+        )
+
+        BookSourceCheckStatus.Succeeded -> application.getString(
+            io.legado.app.R.string.book_source_check_succeeded
+        )
+
+        BookSourceCheckStatus.Cancelled -> application.getString(
+            io.legado.app.R.string.book_source_check_item_cancelled
+        )
+
+        BookSourceCheckStatus.Failed -> when (failure) {
+            BookSourceCheckFailure.SourceMissing -> application.getString(
+                io.legado.app.R.string.book_source_check_source_missing
+            )
+
+            BookSourceCheckFailure.SaveFailed -> application.getString(
+                io.legado.app.R.string.book_source_check_save_failed,
+                errorDetail,
+            )
+
+            BookSourceCheckFailure.Incomplete -> application.getString(
+                io.legado.app.R.string.book_source_check_incomplete
+            )
+
+            BookSourceCheckFailure.CheckFailed,
+            null -> application.getString(
+                io.legado.app.R.string.book_source_check_failed,
+                errorDetail,
+            )
+        }
+    }
+}
 
 private fun List<BookSourcePart>.filterFor(filter: String?, query: String): List<BookSourcePart> =
     filter { source ->
