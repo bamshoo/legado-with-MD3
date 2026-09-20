@@ -17,6 +17,8 @@ import io.legado.app.data.repository.ReadAloudSettingsRepository
 import io.legado.app.domain.model.AiReasoningLevel
 import io.legado.app.domain.model.TextProcessStyle
 import io.legado.app.domain.model.readaloud.SpeechRoleType
+import io.legado.app.domain.model.settings.ReadAloudContentSplitMode
+import io.legado.app.domain.model.settings.ReadAloudTimerMode
 import io.legado.app.domain.model.settings.ReadStyleItem
 import io.legado.app.domain.usecase.BookmarkTargetVerdict
 import io.legado.app.model.translation.TranslationChapterStatus
@@ -24,8 +26,10 @@ import io.legado.app.ui.book.read.sheet.ReaderBookSheetTab
 import io.legado.app.ui.book.searchContent.SearchResult
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.ImmutableSet
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.persistentSetOf
 import kotlin.uuid.Uuid
 
 @Stable
@@ -277,20 +281,31 @@ data class ReadBookUiState(
     val readAloudIgnoreAudioFocus: Boolean = false,
     val readAloudPauseOnPhoneCall: Boolean = false,
     val readAloudWakeLock: Boolean = false,
+    val readAloudKeepOnExit: Boolean = false,
     val showReadAloudCapsule: Boolean = true,
     val capsuleAutoCollapse: Boolean = true,
     val readAloudCapsuleOffsetX: Float = 0f,
     val readAloudCapsuleOffsetY: Float = 0f,
     val readAloudMediaButtonPerNext: Boolean = false,
     val readAloudByPage: Boolean = false,
+    /** 内容划分方式（[ReadAloudContentSplitMode.storageValue]）。 */
+    val readAloudContentSplitMode: String = ReadAloudContentSplitMode.Default.storageValue,
+    /** 「按符号」划分方式选中的标点，空集合表示使用默认句末标点。 */
+    val readAloudContentSplitSymbols: ImmutableSet<String> = persistentSetOf(),
     val readAloudSystemMediaCompat: Boolean = true,
     val readAloudAndroidMediaControl: Boolean = false,
     val readAloudStreamAudio: Boolean = false,
     val readAloudTtsFollowSys: Boolean = false,
     val readAloudTtsSpeechRate: Int = 10,
     val readAloudTtsTimer: Int = 0,
+    /** 分钟定时到点后读完本章再停；只对分钟模式有意义。 */
     val readAloudFinishCurrentChapterAfterTimer: Boolean = false,
+    /** 定时模式：分钟 / 章节（[ReadAloudTimerMode.storageValue]）。 */
+    val readAloudTimerMode: String = ReadAloudTimerMode.Minute.storageValue,
+    /** 章节定时剩余章数；0 表示未开启。 */
+    val readAloudTimerChapters: Int = 0,
     val speechAnalysisMode: String = "rule",
+    val speechAnalysisReasoningLevel: String = AiReasoningLevel.OFF.storageValue,
     val useMultiSpeaker: Boolean = true,
     val defaultReadAloudInterface: String = ReadAloudSettingsRepository.DEFAULT_INTERFACE_CLASSIC,
     val readAloudParagraphInterval: Int = 0,
@@ -304,6 +319,10 @@ data class ReadBookUiState(
 ) {
     val menuVisible: Boolean
         get() = menuState.visible
+
+    /** 朗读设置卡片是否打开；经典控制面板与听书播放界面共用同一份设置内容。 */
+    val isReadAloudConfigOpen: Boolean
+        get() = activeSheet is ReadBookSheet.ReadAloudConfig
 }
 
 /** 护眼模式设置，来源是 ThemeSettings，与外观设置共用同一份值。 */
@@ -425,7 +444,7 @@ internal val MoreActionIds = listOf(
     "source_custom_button", "change_source", "refresh", "download", "edit_content", "add_bookmark",
     "text_processing", "reverse_content", "re_segment",
     "del_ruby", "del_h", "toc_rule", "charset", "image_style", "page_anim",
-    "simulated_reading", "get_progress", "cover_progress", "highlight_rule",
+    "simulated_reading", "get_progress", "cover_progress", "highlight_rule", "read_style",
     "bottom_button_config", "log",
 )
 
@@ -567,9 +586,15 @@ sealed interface ReadBookIntent {
     // Content edit
     data object OpenContentEdit : ReadBookIntent
     data object LoadContentEdit : ReadBookIntent
-    data class SaveContentEdit(val content: String, val saveToSource: Boolean) : ReadBookIntent
+    data class SaveContentEdit(
+        val content: String,
+        val saveToSource: Boolean,
+        val chapterTitle: String,
+    ) : ReadBookIntent
     data object ResetContentEdit : ReadBookIntent
     data class SetContentEditText(val text: String) : ReadBookIntent
+    data class SetContentEditTitle(val title: String) : ReadBookIntent
+    data class SetContentEditBodyOnly(val enabled: Boolean) : ReadBookIntent
     data class SetContentEditSaveToSource(val value: Boolean) : ReadBookIntent
 
     // Tools
@@ -692,6 +717,14 @@ sealed interface ReadBookIntent {
     data class TextActionBookmark(val bookmark: Bookmark) : ReadBookIntent
     data class OpenMarking(val selection: Bookmark) : ReadBookIntent
 
+    /** Prepare the inline selection-menu marking controls without opening the editor sheet. */
+    data class OpenQuickMarking(val selection: Bookmark) : ReadBookIntent
+    data class OpenQuickMarkingEdit(val id: String) : ReadBookIntent
+    data class ApplyQuickMarking(val style: TextProcessStyle, val note: String? = null) :
+        ReadBookIntent
+
+    data object DismissQuickMarking : ReadBookIntent
+
     /** 从正文处理 Sheet 点标记项进入编辑模式。 */
     data class EditMarking(val id: String) : ReadBookIntent
     data object DismissMarking : ReadBookIntent
@@ -767,12 +800,18 @@ sealed interface ReadBookIntent {
     data class SetReadAloudIgnoreAudioFocus(val value: Boolean) : ReadBookIntent
     data class SetReadAloudPauseOnPhoneCall(val value: Boolean) : ReadBookIntent
     data class SetReadAloudWakeLock(val value: Boolean) : ReadBookIntent
+    data class SetReadAloudKeepOnExit(val value: Boolean) : ReadBookIntent
     data class SetShowReadAloudCapsule(val value: Boolean) : ReadBookIntent
     data class SetCapsuleAutoCollapse(val value: Boolean) : ReadBookIntent
     data object ResetReadAloudCapsulePosition : ReadBookIntent
     data class SetReadAloudCapsulePosition(val x: Float, val y: Float) : ReadBookIntent
     data class SetReadAloudMediaButtonPerNext(val value: Boolean) : ReadBookIntent
-    data class SetReadAloudByPage(val value: Boolean) : ReadBookIntent
+
+    /**
+     * 内容划分方式与配套标点集合，取值是
+     * [io.legado.app.domain.model.readaloud.ReadAloudContentSplitSetting.encode] 的编码。
+     */
+    data class SetReadAloudContentSplitMode(val value: String) : ReadBookIntent
     data class SetReadAloudSystemMediaCompat(val value: Boolean) : ReadBookIntent
     data class SetReadAloudAndroidMediaControl(val value: Boolean) : ReadBookIntent
     data class SetReadAloudStreamAudio(val value: Boolean) : ReadBookIntent
@@ -787,10 +826,17 @@ sealed interface ReadBookIntent {
     /** 页面脱离朗读位置后，从当前显示页重新开始朗读。 */
     data object ReadAloudFromHere : ReadBookIntent
     data class SetReadAloudTtsTimer(val value: Int) : ReadBookIntent
+
+    /** [value] 是 [ReadAloudTimerMode.storageValue]。 */
+    data class SetReadAloudTimerMode(val value: String) : ReadBookIntent
+    data class SetReadAloudTimerChapters(val value: Int) : ReadBookIntent
+
+    /** 分钟定时到点后是否读完本章再停。 */
     data class SetFinishCurrentChapterAfterTimer(val value: Boolean) : ReadBookIntent
     data class SetReadAloudTtsFollowSys(val value: Boolean) : ReadBookIntent
     data class SetReadAloudTtsSpeechRate(val value: Int) : ReadBookIntent
     data class SetSpeechAnalysisMode(val value: String) : ReadBookIntent
+    data class SetSpeechAnalysisReasoningLevel(val value: String) : ReadBookIntent
     data class SetUseMultiSpeaker(val value: Boolean) : ReadBookIntent
     data class SetDefaultReadAloudInterface(val value: String) : ReadBookIntent
     data object OpenSystemTtsSettings : ReadBookIntent
@@ -934,6 +980,14 @@ sealed interface ReadBookEffect {
     data class OpenMenuCustomIconPicker(val id: String) : ReadBookEffect
     data class OpenTitleBarCustomIconPicker(val id: String) : ReadBookEffect
     data object OpenSystemTtsSettings : ReadBookEffect
+
+    /**
+     * 打开听书播放界面。
+     *
+     * 播放界面是 Navigation 3 目的地（[io.legado.app.ui.main.MainRouteReadAloudPlayer]），
+     * 不再是阅读器内的弹层，因此这里只发导航意图，不写 `activeSheet`。
+     */
+    data object OpenReadAloudPlayer : ReadBookEffect
     data object OpenTtsEnginesAndVoices : ReadBookEffect
     data object OpenTtsCache : ReadBookEffect
     data class OpenBookVoiceCasting(val bookUrl: String) : ReadBookEffect
@@ -995,7 +1049,6 @@ sealed interface ReadBookSheet {
     data object MoreConfig : ReadBookSheet
     data object BgTextConfig : ReadBookSheet
     data object ReadAloudConfig : ReadBookSheet
-    data object ReadAloudPlayer : ReadBookSheet
     data object PreDownloadConfig : ReadBookSheet
     data object PreSynthesisConcurrencyConfig : ReadBookSheet
     data object AudioCacheCleanConfig : ReadBookSheet

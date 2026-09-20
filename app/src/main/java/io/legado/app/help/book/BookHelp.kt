@@ -12,13 +12,16 @@ import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookSource
+import io.legado.app.domain.gateway.DownloadCacheSettingsGateway
+import io.legado.app.domain.gateway.ReadSettingsGateway
+import io.legado.app.help.book.BookHelp.saveText
+import io.legado.app.help.book.BookHelp.saveToLocalTxt
 import io.legado.app.model.analyzeRule.AnalyzeUrl
 import io.legado.app.model.localBook.LocalBook
 import io.legado.app.model.localBook.TextFile
-import io.legado.app.domain.gateway.DownloadCacheSettingsGateway
-import io.legado.app.domain.gateway.ReadSettingsGateway
 import io.legado.app.utils.ArchiveUtils
 import io.legado.app.utils.FileUtils
+import io.legado.app.utils.HtmlFormatter
 import io.legado.app.utils.ImageUtils
 import io.legado.app.utils.MD5Utils
 import io.legado.app.utils.NetworkUtils
@@ -209,10 +212,24 @@ object BookHelp {
             bookChapter.getFileName(),
         ).writeText(content)
         if (book.isOnLineTxt && readGateway.currentSettings.tocCountWords) {
-            val wordCount = StringUtils.wordCountFormat(content.length)
+            // 正文里携带的 <img src="data:base64">、内联 SVG 等富文本源码会把章节字数虚抬
+            // 几倍（3 页正文显示 3000+ 字）。这里剔除标签/Base64 后按可读纯文本计数，
+            // 取代原先的 StringUtils.wordCountFormat(content.length)。
+            val readableLength = HtmlFormatter.countReadableTextLength(content)
+            val wordCount = StringUtils.wordCountFormat(readableLength)
             bookChapter.wordCount = wordCount
             appDb.bookChapterDao.update(bookChapter)
         }
+    }
+
+    /**
+     * 保存章名。[BookChapter] 是 Room 实体，就地改名后 update，与 [saveText] 里
+     * `wordCount` 的写法一致。本地 TXT 的源文件标题由随后的 [saveText] →
+     * [saveToLocalTxt] 写入（它用 `bookChapter.title` 当段首标题）。
+     */
+    fun saveChapterTitle(bookChapter: BookChapter, title: String) {
+        bookChapter.title = title
+        appDb.bookChapterDao.update(bookChapter)
     }
 
     private fun saveToLocalTxt(book: Book, bookChapter: BookChapter, content: String) {

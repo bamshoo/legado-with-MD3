@@ -263,11 +263,15 @@ private fun BookInfoScreenContent(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // 资源串在 composable 作用域内解析：LocalContext.current.getString 不感知配置变化，
+    // 语言/字体缩放切换后可能拿到过期值（LocalContextGetResourceValueCall）。
+    val jumpToAnotherAppMessage = stringResource(R.string.jump_to_another_app)
+    val confirmLabel = stringResource(R.string.confirm)
     val jumpToAnotherApp: (Uri) -> Unit = { uri ->
         scope.launch {
             val result = snackbarHostState.showSnackbar(
-                message = context.getString(R.string.jump_to_another_app),
-                actionLabel = context.getString(R.string.confirm),
+                message = jumpToAnotherAppMessage,
+                actionLabel = confirmLabel,
             )
             if (result == SnackbarResult.ActionPerformed) {
                 context.openUrl(uri)
@@ -998,6 +1002,10 @@ private fun BookInfoHeader(
                         author = book.author,
                         path = if (usesDefaultCover) null else book.coverPath,
                         sourceOrigin = if (usesDefaultCover) null else book.origin,
+                        // 传 bookUrl 供别名缓存键。详情页故意不设 preferCache：
+                        // 在线时仍走完整链路拉新链接并刷新别名，保证封面换图后书架也能更新；
+                        // 精确命中时同样不跑脚本。
+                        bookUrl = book.bookUrl,
                         onError = onNetworkCoverLoadError,
                         modifier = Modifier
                             .width(112.dp)

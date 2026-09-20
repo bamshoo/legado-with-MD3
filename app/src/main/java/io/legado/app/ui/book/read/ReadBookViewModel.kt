@@ -39,6 +39,7 @@ import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.gateway.ReadStyleGateway
 import io.legado.app.domain.gateway.ThemeSettingsGateway
 import io.legado.app.domain.model.readaloud.ReadAloudSessionStatus
+import io.legado.app.domain.model.settings.ReadAloudTimerMode
 import io.legado.app.domain.usecase.AiTextFactoryUseCase
 import io.legado.app.domain.usecase.ChangeBookSourceUseCase
 import io.legado.app.domain.usecase.CleanSelectedTextUseCase
@@ -81,6 +82,7 @@ import io.legado.app.model.translation.TranslationManager
 import io.legado.app.service.BaseReadAloudService
 import io.legado.app.ui.book.read.sheet.ReaderBookSheetTab
 import io.legado.app.ui.book.searchContent.SearchResult
+import io.legado.app.utils.GSON
 import io.legado.app.utils.ImageSaveUtils
 import io.legado.app.utils.NetworkUtils
 import io.legado.app.utils.isAbsUrl
@@ -226,7 +228,7 @@ class ReadBookViewModel(
         saveMarkingUseCase = saveMarkingUseCase,
         host = object : MarkingDelegate.Host {
             override fun reloadCurrentChapter() {
-                contentProcessDelegate.reloadCurrentChapter()
+                contentProcessDelegate.reloadCurrentChapterPreservingSnapshot()
             }
 
             override fun dismissMarkingSheet() {
@@ -1055,9 +1057,12 @@ class ReadBookViewModel(
             is ReadBookIntent.OpenContentEdit -> contentEditDelegate.open()
             is ReadBookIntent.LoadContentEdit -> contentEditDelegate.load()
             is ReadBookIntent.SaveContentEdit ->
-                contentEditDelegate.save(intent.content, intent.saveToSource)
+                contentEditDelegate.save(intent.content, intent.saveToSource, intent.chapterTitle)
             is ReadBookIntent.ResetContentEdit -> contentEditDelegate.reset()
             is ReadBookIntent.SetContentEditText -> contentEditDelegate.setText(intent.text)
+            is ReadBookIntent.SetContentEditTitle -> contentEditDelegate.setTitle(intent.title)
+            is ReadBookIntent.SetContentEditBodyOnly ->
+                contentEditDelegate.setBodyOnly(intent.enabled)
             is ReadBookIntent.SetContentEditSaveToSource ->
                 contentEditDelegate.setSaveToSource(intent.value)
             is ReadBookIntent.RefreshImage -> refreshImage(intent.src)
@@ -1324,6 +1329,8 @@ class ReadBookViewModel(
             is ReadBookIntent.SetReadAloudPauseOnPhoneCall ->
                 readAloudDelegate.setPauseOnPhoneCall(intent.value)
             is ReadBookIntent.SetReadAloudWakeLock -> readAloudDelegate.setWakeLock(intent.value)
+            is ReadBookIntent.SetReadAloudKeepOnExit ->
+                readAloudDelegate.setKeepOnExit(intent.value)
             is ReadBookIntent.SetShowReadAloudCapsule ->
                 readAloudDelegate.setShowCapsule(intent.value)
             is ReadBookIntent.SetCapsuleAutoCollapse ->
@@ -1334,7 +1341,8 @@ class ReadBookViewModel(
                 readAloudDelegate.setCapsulePosition(intent.x, intent.y)
             is ReadBookIntent.SetReadAloudMediaButtonPerNext ->
                 readAloudDelegate.setMediaButtonPerNext(intent.value)
-            is ReadBookIntent.SetReadAloudByPage -> readAloudDelegate.setByPage(intent.value)
+            is ReadBookIntent.SetReadAloudContentSplitMode ->
+                readAloudDelegate.setContentSplitMode(intent.value)
             is ReadBookIntent.SetReadAloudSystemMediaCompat ->
                 readAloudDelegate.setSystemMediaCompat(intent.value)
             is ReadBookIntent.SetReadAloudAndroidMediaControl ->
@@ -1350,14 +1358,19 @@ class ReadBookViewModel(
             ReadBookIntent.BackToSpeakingPosition -> readAloudDelegate.backToSpeakingPosition()
             ReadBookIntent.ReadAloudFromHere -> ReadBook.readAloud()
             is ReadBookIntent.SetReadAloudTtsTimer -> readAloudDelegate.setTtsTimer(intent.value)
-            is ReadBookIntent.SetFinishCurrentChapterAfterTimer ->
-                readAloudDelegate.setFinishCurrentChapterAfterTimer(intent.value)
+            is ReadBookIntent.SetReadAloudTimerMode ->
+                readAloudDelegate.setTimerMode(ReadAloudTimerMode.fromStorage(intent.value))
+
+            is ReadBookIntent.SetReadAloudTimerChapters -> readAloudDelegate.setTimerChapters(intent.value)
+            is ReadBookIntent.SetFinishCurrentChapterAfterTimer -> readAloudDelegate.setFinishCurrentChapterAfterTimer(
+                intent.value
+            )
             is ReadBookIntent.SetReadAloudTtsFollowSys ->
                 readAloudDelegate.setTtsFollowSys(intent.value)
             is ReadBookIntent.SetReadAloudTtsSpeechRate ->
                 readAloudDelegate.setTtsSpeechRate(intent.value)
-            is ReadBookIntent.SetSpeechAnalysisMode ->
-                readAloudDelegate.setSpeechAnalysisMode(intent.value)
+            is ReadBookIntent.SetSpeechAnalysisMode -> readAloudDelegate.setSpeechAnalysisMode(intent.value)
+            is ReadBookIntent.SetSpeechAnalysisReasoningLevel -> readAloudDelegate.setSpeechAnalysisReasoningLevel(intent.value)
             is ReadBookIntent.SetUseMultiSpeaker ->
                 readAloudDelegate.setUseMultiSpeaker(intent.value)
             is ReadBookIntent.SetDefaultReadAloudInterface ->
@@ -1446,6 +1459,30 @@ class ReadBookViewModel(
                 markingDelegate.open(intent.selection)
                 _uiState.update { it.copy(activeSheet = ReadBookSheet.Marking) }
             }
+
+            is ReadBookIntent.OpenQuickMarking -> {
+                markingReturnSheet = null
+                markingDelegate.open(intent.selection, inlineMode = true)
+            }
+
+            is ReadBookIntent.OpenQuickMarkingEdit -> {
+                markingReturnSheet = null
+                markingDelegate.openForEdit(intent.id, inlineMode = true)
+            }
+
+            is ReadBookIntent.ApplyQuickMarking -> {
+                viewModelScope.launch {
+                    readSettingsRepository.update {
+                        it.copy(lastMarkingStyle = GSON.toJson(intent.style))
+                    }
+                }
+                markingDelegate.save(
+                    style = intent.style,
+                    note = intent.note ?: markingDelegate.uiState.value.editing?.note.orEmpty(),
+                )
+            }
+
+            ReadBookIntent.DismissQuickMarking -> markingDelegate.closeInlineSession()
 
             is ReadBookIntent.EditMarking -> {
                 // 从目录 Sheet 进入：记住原 sheet，保存/删除/取消后返回
@@ -2206,6 +2243,11 @@ class ReadBookViewModel(
 
     private fun stopReadAloudForClose() {
         if (closeReadBookKeepReadAloud || !BaseReadAloudService.isRun) {
+            return
+        }
+        // 「退出阅读时继续后台朗读」：读的是持久设置，不依赖本次退出来源
+        // （标题栏关闭、返回手势、后台按钮走的是同一个 closeReadBook）。
+        if (readAloudSettingsRepository.currentSettings.keepReadAloudOnExit) {
             return
         }
         ReadAloud.stop(context)
