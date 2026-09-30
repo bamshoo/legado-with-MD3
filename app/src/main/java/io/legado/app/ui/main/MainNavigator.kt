@@ -3,6 +3,7 @@ package io.legado.app.ui.main
 import android.app.Activity
 import android.content.Intent
 import androidx.navigation3.runtime.NavKey
+import io.legado.app.feature.reader.platform.ReaderPerfTrace
 import io.legado.app.model.ReadBook
 import io.legado.app.ui.rss.article.MainRouteRssSort
 import io.legado.app.ui.rss.read.MainRouteRssRead
@@ -67,6 +68,7 @@ object MainNavigator {
             }
         }
 
+        if (route is MainRouteReadBook) ReaderPerfTrace.marker("open.request")
         // 导航动画和阅读页组合要花几百毫秒, 这段时间足够把正文读出来并排版好
         if (route is MainRouteReadBook && !route.chapterChanged) {
             route.bookUrl?.let { ReadBook.prefetchForOpen(it) }
@@ -85,6 +87,8 @@ object MainNavigator {
             is MainRouteRssSourceEdit,
             is MainRouteBookSourceDebug,
             is MainRouteRssSourceDebug -> backStack.add(route)
+
+            MainRouteReadAloudPlayer -> backStack.add(route)
 
             MainRouteHome -> {
                 backStack.clear()
@@ -126,7 +130,8 @@ object MainNavigator {
             MainRouteSettingsCustomTheme,
             MainRouteSettingsThemeManage,
             MainRouteSettingsDownloadCache,
-            MainRouteSettingsTranslation -> {
+            MainRouteSettingsTranslation,
+            MainRouteSettingsPrivate -> {
                 backStack.clear()
                 backStack.add(MainRouteHome)
                 backStack.add(MainRouteSettings)
@@ -173,18 +178,6 @@ object MainNavigator {
 
             is MainRouteSearchContent -> {
                 backStack.add(route)
-            }
-
-            MainRouteReadAloudPlayer -> {
-                // 单例语义：已在栈上则回到那一层，避免重复按媒体键叠出多个播放界面
-                val existingPlayerIndex = backStack.indexOfLast { it is MainRouteReadAloudPlayer }
-                if (existingPlayerIndex >= 0) {
-                    while (backStack.lastIndex > existingPlayerIndex) {
-                        backStack.removeAt(backStack.lastIndex)
-                    }
-                } else {
-                    backStack.add(route)
-                }
             }
 
             is MainRouteSearch -> {
@@ -476,6 +469,7 @@ object MainNavigator {
             MainRouteConst.ROUTE_SETTINGS_AI -> MainRouteSettingsAi
             MainRouteConst.ROUTE_AI_CHAT -> MainRouteAiChat
             MainRouteConst.ROUTE_SETTINGS_CUSTOM_THEME -> MainRouteSettingsCustomTheme
+            MainRouteConst.ROUTE_SETTINGS_PRIVATE -> MainRouteSettingsPrivate
             MainRouteConst.ROUTE_SETTINGS_LAB_CONFIG -> MainRouteSettingsLabConfig
             MainRouteConst.ROUTE_SETTINGS_DOWNLOAD_CACHE -> MainRouteSettingsDownloadCache
             MainRouteConst.ROUTE_SETTINGS_TRANSLATION -> MainRouteSettingsTranslation

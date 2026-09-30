@@ -95,6 +95,8 @@ data class ReadBookStyleConfig(
     // Page anim
     val pageAnim: Int = 0,
     val pageAnimEInk: Int = 4,
+    // 翻页速度挡位 0:极速 1:快速 2:适中(默认) 3:优雅，取值与时长见 ReaderPageTurnSpeed
+    val pageAnimSpeed: Int = 2,
     // Layout
     val shareLayout: Boolean = false,
     // 排版自带的阅读菜单配色，作为 DataStore 里 readMenu*Color 为 0（未自定义）时的回退
@@ -682,6 +684,9 @@ sealed interface ReadBookIntent {
         val rule: HighlightRule,
     ) : ReadBookIntent
     data object SaveImportedHighlightRules : ReadBookIntent
+
+    /** 打开内置预设规则清单（多选后按 [SaveImportedHighlightRules] 入库）。 */
+    data object ShowHighlightRulePresets : ReadBookIntent
     data object ExportHighlightRules : ReadBookIntent
     data object ExportHighlightRulesAsUrl : ReadBookIntent
     data class ExportHighlightRulesToFile(val uri: Uri) : ReadBookIntent
@@ -980,14 +985,6 @@ sealed interface ReadBookEffect {
     data class OpenMenuCustomIconPicker(val id: String) : ReadBookEffect
     data class OpenTitleBarCustomIconPicker(val id: String) : ReadBookEffect
     data object OpenSystemTtsSettings : ReadBookEffect
-
-    /**
-     * 打开听书播放界面。
-     *
-     * 播放界面是 Navigation 3 目的地（[io.legado.app.ui.main.MainRouteReadAloudPlayer]），
-     * 不再是阅读器内的弹层，因此这里只发导航意图，不写 `activeSheet`。
-     */
-    data object OpenReadAloudPlayer : ReadBookEffect
     data object OpenTtsEnginesAndVoices : ReadBookEffect
     data object OpenTtsCache : ReadBookEffect
     data class OpenBookVoiceCasting(val bookUrl: String) : ReadBookEffect
@@ -1005,11 +1002,7 @@ sealed interface ReadBookEffect {
     // Download chapters — Activity calls CacheBook.start()
     data class DownloadChapters(val start: Int, val end: Int) : ReadBookEffect
 
-    // Lifecycle — route-level Activity operations
-    data object RegisterTimeBatteryReceiver : ReadBookEffect
-    data object UnregisterTimeBatteryReceiver : ReadBookEffect
-    data object RegisterNetworkListener : ReadBookEffect
-    data object UnregisterNetworkListener : ReadBookEffect
+    // Other route-level Activity operations
     data object SetOrientation : ReadBookEffect
     data object OpenBooksDirPicker : ReadBookEffect
     data object BackupNow : ReadBookEffect
@@ -1358,6 +1351,12 @@ sealed interface ConfigUpdate {
             ConfigUpdateAction.RebuildWholeBookPageIndex,
             ConfigUpdateAction.ReloadContent,
         )
+    }
+
+    // 翻页动画速度挡位只改翻页动画的折算基准时长，不改变动画种类、页高或排版，
+    // 因此没有任何渲染副作用：下一次翻页现读新挡位即可。
+    data class PageAnimSpeed(val value: Int) : ConfigUpdate {
+        override val actions = emptySet<ConfigUpdateAction>()
     }
 
     // --- Menu colors ---
