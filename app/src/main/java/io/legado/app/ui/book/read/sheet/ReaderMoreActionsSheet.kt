@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CleanHands
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
@@ -144,6 +145,8 @@ private fun MoreActionsPager(
         val rowCount = if (actions.size > 4) 2 else 1
         HorizontalPager(
             state = pagerState,
+            // 页数很少，手势频繁停在边界；保留平台 stretch 过冲会在松手后反向回弹。
+            overscrollEffect = null,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(
@@ -308,6 +311,10 @@ private fun moreActionSpecs(
         applicable = !state.isLocalBook,
         onClick = { onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.Download)) }),
     MoreActionSpec(
+        "audio_download",
+        stringResource(R.string.read_aloud_audio_download_entry), Icons.Default.Download,
+        onClick = { onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.AudioDownload)) }),
+    MoreActionSpec(
         "toc_rule", stringResource(R.string.txt_toc_rule), Icons.AutoMirrored.Filled.Toc,
         applicable = state.isLocalTxt, onClick = { dispatch(ReadBookIntent.MenuTocRegex) }),
     MoreActionSpec(
@@ -354,11 +361,11 @@ private fun moreActionSpecs(
         onClick = { onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.SimulatedReading)) }),
     MoreActionSpec(
         "get_progress", stringResource(R.string.get_book_progress), Icons.Default.Sync,
-        applicable = state.isReadingProgressSyncConfigured,
+        applicable = state.inBookshelf && state.isReadingProgressSyncConfigured,
         onClick = { dispatch(ReadBookIntent.MenuGetProgress) }),
     MoreActionSpec(
         "cover_progress", stringResource(R.string.cover_book_progress), Icons.Default.Sync,
-        applicable = state.isReadingProgressSyncConfigured,
+        applicable = state.inBookshelf && state.isReadingProgressSyncConfigured,
         onClick = { dispatch(ReadBookIntent.MenuCoverProgress) }),
     MoreActionSpec(
         "bottom_button_config", stringResource(R.string.config_btn), Icons.Default.Settings,

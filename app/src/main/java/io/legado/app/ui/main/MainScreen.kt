@@ -83,6 +83,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import io.legado.app.R
+import io.legado.app.feature.explore.ExploreMainRoute
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleEndPadding
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleSize
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleSlot
@@ -91,7 +92,6 @@ import io.legado.app.ui.book.readaloud.morph.ReadAloudMorphState
 import io.legado.app.ui.main.bookshelf.BookShelfItem
 import io.legado.app.ui.main.bookshelf.BookshelfRouteScreen
 import io.legado.app.ui.main.bookshelf.BookshelfViewModel
-import io.legado.app.ui.main.explore.ExploreRouteScreen
 import io.legado.app.ui.main.home.HomeRouteScreen
 import io.legado.app.ui.main.my.MyRouteScreen
 import io.legado.app.ui.main.my.PrefClickEvent
@@ -153,6 +153,7 @@ onNavigateToFanqie: () -> Unit,
     onNavigateToExploreShow: (title: String?, sourceUrl: String, exploreUrl: String?) -> Unit,
     onNavigateToSourceLogin: (type: io.legado.app.ui.login.SourceLoginType, sourceUrl: String) -> Unit,
     onNavigateToBookSourceManage: () -> Unit,
+    onNavigateToReplaceRules: () -> Unit,
     onNavigateToBookSourceEdit: (String?) -> Unit,
     onNavigateToRssSourceManage: () -> Unit,
     onNavigateToRssSourceEdit: (String?) -> Unit,
@@ -169,6 +170,7 @@ onNavigateToFanqie: () -> Unit,
     onNavigateToReadRecord: () -> Unit,
     onNavigateToReadRecordOverview: () -> Unit,
     onNavigateToHighlightTagRule: () -> Unit,
+    onNavigateToMultiRoleRule: () -> Unit,
     onNavigateToAbout: () -> Unit,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
@@ -195,6 +197,7 @@ onNavigateToFanqie: () -> Unit,
                 MainEffect.ExitApp -> (context as? ComponentActivity)?.finish()
                 MainEffect.NavigateToReadRecord -> onNavigateToReadRecord()
                 MainEffect.NavigateToHighlightTagRule -> onNavigateToHighlightTagRule()
+                MainEffect.NavigateToMultiRoleRule -> onNavigateToMultiRoleRule()
                 MainEffect.NavigateToAbout -> onNavigateToAbout()
             }
         }
@@ -580,8 +583,18 @@ onNavigateToFanqie: () -> Unit,
                                 animatedVisibilityScope = animatedVisibilityScope,
                             )
 
-                            MainDestination.Explore -> ExploreRouteScreen(
+                                MainDestination.Explore -> ExploreMainRoute(
                                 onOpenExploreShow = onNavigateToExploreShow,
+                                    onBookClick = { book, sharedCoverKey ->
+                                        onNavigateToBookInfo(
+                                            book.name,
+                                            book.author,
+                                            book.bookUrl,
+                                            book.origin,
+                                            book.coverUrl,
+                                            sharedCoverKey,
+                                        )
+                                    },
                                 onOpenLogin = { sourceUrl ->
                                     onNavigateToSourceLogin(
                                         io.legado.app.ui.login.SourceLoginType.BookSource,
@@ -616,6 +629,7 @@ onNavigateToFanqie: () -> Unit,
                                     when (event) {
                                         PrefClickEvent.OpenBookCacheManage -> onNavigateToBookCacheManage()
                                         PrefClickEvent.OpenBookSourceManage -> onNavigateToBookSourceManage()
+                                        PrefClickEvent.OpenReplaceRules -> onNavigateToReplaceRules()
                                         PrefClickEvent.OpenReadRecord -> onNavigateToReadRecord()
                                         else -> onIntent(MainUiIntent.HandlePreferenceClick(event))
                                     }

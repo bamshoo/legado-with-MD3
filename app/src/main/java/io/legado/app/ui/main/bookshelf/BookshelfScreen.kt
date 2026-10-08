@@ -56,6 +56,7 @@ import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GridView
@@ -68,6 +69,7 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.outlined.ViewCarousel
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -191,7 +193,10 @@ fun BookshelfRouteScreen(
     // 离开前那一版列表；目标一旦回到可见（正常返回、预测性返回都算），立刻恢复用最新
     // 排序 —— 重排发生在书架不可见的时候，回到书架时看到的已经是排好的结果。
     val transition = animatedVisibilityScope?.transition
-    val isLeavingShelf = transition?.targetState == EnterExitState.PostExit
+    // 判据是「目标不再是可见」而不是「已经退完」：打开书会立刻落库最后阅读时间，列表 Flow
+    // 在**动画进行中**就重发一次。用 PostExit 的话整块网格正好在动画那 420ms 里跟着重排、
+    // 每张封面重建 Coil 请求——用户看到的「从书架打开卡、从详情页打开丝滑」差的就是这一条。
+    val isLeavingShelf = transition != null && transition.targetState != EnterExitState.Visible
     var leavingShelfState by remember { mutableStateOf<BookshelfUiState?>(null) }
     LaunchedEffect(isLeavingShelf) {
         if (isLeavingShelf) return@LaunchedEffect
@@ -666,6 +671,18 @@ fun BookshelfScreen(
                         )
                     }
 
+                    AnimatedVisibility(visible = isEditMode) {
+                        TopBarActionButton(
+                            onClick = {
+                                if (selectedBookUrls.isNotEmpty()) {
+                                    onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.DeleteBooksConfirmDialog))
+                                }
+                            },
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.delete_selected)
+                        )
+                    }
+
                     if (!isEditMode) {
                         Box {
                             TopBarActionButton(
@@ -905,18 +922,15 @@ fun BookshelfScreen(
             )
         }
     ) { paddingValues ->
-        val currentGroup by remember {
-            derivedStateOf {
-                if (uiState.isSearch) {
-                    uiState.allGroups.firstOrNull { it.groupId == currentGroupId }
-                } else {
-                    uiState.groups.getOrNull(pagerState.settledPage)
-                }
-            }
+        // uiState 是普通参数而不是快照状态：用 remember { derivedStateOf { … } } 会把首次
+        // 组合时的 uiState 永久缓存下来，之后分组开关（enableRefresh）改了也读不到，
+        // 于是"允许下拉刷新"关掉后依然能下拉。这里直接读取，随重组刷新即可。
+        val currentGroup = if (uiState.isSearch) {
+            uiState.allGroups.firstOrNull { it.groupId == currentGroupId }
+        } else {
+            uiState.groups.getOrNull(pagerState.settledPage)
         }
-        val pullToRefreshEnabled by remember {
-            derivedStateOf { (currentGroup?.enableRefresh ?: true) && !isEditMode }
-        }
+        val pullToRefreshEnabled = (currentGroup?.enableRefresh ?: true) && !isEditMode
 
         Box(Modifier.fillMaxSize()) {
             AppPullToRefresh(
@@ -1509,6 +1523,41 @@ private fun BookshelfOverlays(
         dismissText = stringResource(android.R.string.cancel),
         onDismiss = { onIntent(BookshelfIntent.DismissOverlay) }
     )
+
+    if (activeOverlay == BookshelfOverlay.DeleteBooksConfirmDialog) {
+        // 勾选态只活在这次弹窗里：每次打开都从"不删源文件"起步
+        var deleteOriginal by remember { mutableStateOf(false) }
+        val hasLocalBook = remember(uiState.items, selectedBookUrls) {
+            uiState.items.any { it.book.isLocal && it.book.bookUrl in selectedBookUrls }
+        }
+        AppAlertDialog(
+            show = true,
+            onDismissRequest = { onIntent(BookshelfIntent.DismissOverlay) },
+            title = stringResource(R.string.delete_selected),
+            text = stringResource(R.string.bookshelf_selected_count, selectedBookUrls.size),
+            content = {
+                if (hasLocalBook) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = deleteOriginal,
+                            onCheckedChange = { deleteOriginal = it }
+                        )
+                        AppText(
+                            text = stringResource(R.string.delete_book_file),
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    }
+                }
+            },
+            confirmText = stringResource(R.string.delete),
+            onConfirm = {
+                onIntent(BookshelfIntent.DeleteBooks(selectedBookUrls, deleteOriginal))
+                onIntent(BookshelfIntent.DismissOverlay)
+            },
+            dismissText = stringResource(R.string.cancel),
+            onDismiss = { onIntent(BookshelfIntent.DismissOverlay) }
+        )
+    }
 
     if (uiState.isLoading) {
         val loadingDescription = uiState.loadingText ?: stringResource(R.string.loading)

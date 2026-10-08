@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CleanHands
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.FindReplace
@@ -173,6 +174,14 @@ private fun OverflowDropdownMenu(
                     onClick = { dismiss(); onIntent(ReadBookIntent.MenuChangeSource) },
                 )
                 RoundDropdownMenuItem(
+                    text = stringResource(R.string.read_aloud_audio_download_entry),
+                    leadingIcon = menuIcon(Icons.Default.Download),
+                    onClick = {
+                        dismiss()
+                        onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.AudioDownload))
+                    },
+                )
+                RoundDropdownMenuItem(
                     text = stringResource(R.string.menu_refresh_dur),
                     leadingIcon = menuIcon(Icons.Default.Refresh),
                     onClick = { dismiss(); onIntent(ReadBookIntent.MenuRefreshDur) },
@@ -318,8 +327,8 @@ private fun OverflowDropdownMenu(
             PillDivider()
         }
 
-        // 进度同步
-        if (state.isReadingProgressSyncConfigured) {
+        // 进度同步（与上游一致：在书架 + 已配云端才显示）
+        if (state.inBookshelf && state.isReadingProgressSyncConfigured) {
             RoundDropdownMenuItem(
                 text = stringResource(R.string.get_book_progress),
                 leadingIcon = menuIcon(Icons.Default.Sync),

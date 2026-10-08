@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Sell
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Source
@@ -55,7 +56,6 @@ import io.legado.app.ui.book.bookmark.AllBookmarkActivity
 import io.legado.app.ui.book.toc.rule.TxtTocRuleActivity
 import io.legado.app.ui.dict.rule.DictRuleActivity
 import io.legado.app.ui.file.FileManageActivity
-import io.legado.app.ui.replace.ReplaceRuleActivity
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.SplicedColumnGroup
@@ -173,7 +173,7 @@ fun MyScreen(
                     imageVector = Icons.Default.FindReplace,
                     onClick = {
                         onNavigate(
-                            PrefClickEvent.StartActivity(ReplaceRuleActivity::class.java)
+                            PrefClickEvent.OpenReplaceRules
                         )
                     }
                 )
@@ -199,6 +199,12 @@ fun MyScreen(
                     title = stringResource(R.string.highlight_tag_config),
                     imageVector = Icons.Default.Sell,
                     onClick = { onNavigate(PrefClickEvent.OpenHighlightTagRule) }
+                )
+                ClickableSettingItem(
+                    title = stringResource(R.string.multi_role_rule),
+                    description = stringResource(R.string.multi_role_rule_summary),
+                    imageVector = Icons.Default.RecordVoiceOver,
+                    onClick = { onNavigate(PrefClickEvent.OpenMultiRoleRule) }
                 )
             }
 

@@ -35,6 +35,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -43,6 +44,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
@@ -321,7 +323,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     private val mangaSettingsGateway by inject<MangaSettingsGateway>()
     private val backupSettingsGateway by inject<BackupSettingsGateway>()
     private val readAloudSettingsRepository by inject<ReadAloudSettingsRepository>()
-    private val navRouteTracker by inject<MainNavRouteTracker>()
+    internal val navRouteTracker by inject<MainNavRouteTracker>()
     private val routeEvents = MutableSharedFlow<RouteEvent>(extraBufferCapacity = 1)
     private val localNetworkPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -342,6 +344,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         installSplashScreen()
         shouldApplyDefaultToRead = savedInstanceState == null
         restoredReadBookRoute = savedInstanceState?.restoreReadBookRoute()
+            ?: navRouteTracker.lastReadBookRoute()
         super.onCreate(savedInstanceState)
 
         if (checkStartupRoute()) return
@@ -419,6 +422,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         val orientation = resources.configuration.orientation
         val smallestWidthDp = resources.configuration.smallestScreenWidthDp
         val configuration = LocalAppUiConfiguration.current
+        val predictiveBackEnabled by rememberUpdatedState(configuration.appShell.predictiveBackEnabled)
         val tabletInterface = configuration.appShell.tabletInterface
         val defaultToReadFlow = remember(otherSettingsGateway) {
             otherSettingsGateway.settings
@@ -619,37 +623,52 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                     ) {
                         NavDisplay(
                             backStack = backStack,
+                            // 交给 nav3 装上 SharedEntryInSceneNavEntryDecorator：这是跨 scene 保持
+                            // 共享元素登记的官方机制。少了它，书架 scene 一被销毁封面的登记就没了——
+                            // 打开书后「马上返回」还有封面转场、'待一会儿再返回'会退化成
+                            // 普通淡入淡出。
+                            sharedTransitionScope = this@SharedTransitionLayout,
                             entryDecorators = listOf(
                                 rememberSaveableStateHolderNavEntryDecorator(),
                                 rememberViewModelStoreNavEntryDecorator(),
                             ),
                             sceneStrategies = listOf(
-                                ModalOverlaySceneStrategy(),
+                                remember {
+                                    ModalOverlaySceneStrategy(
+                                        isTopEntry = {
+                                            // Nav3's default content key also includes the route type.
+                                            backStack.lastOrNull()?.let { top ->
+                                                NavEntry(top) {}.contentKey == it
+                                            } == true
+                                        },
+                                        predictiveBackEnabled = { predictiveBackEnabled },
+                                    )
+                                },
                                 SinglePaneSceneStrategy(),
                             ),
                             transitionSpec = {
                                 if (configuration.theme.isEInkMode) eInkNoTransition else (slideIntoContainer(
                                     towards = AnimatedContentTransitionScope.SlideDirection.Start,
                                     animationSpec = tween(
-                                        durationMillis = 480,
+                                        durationMillis = NAV_SLIDE_DURATION_MILLIS,
                                         easing = FastOutSlowInEasing
                                     ),
                                     initialOffset = { fullWidth -> fullWidth }
                                 ) + fadeIn(
                                     animationSpec = tween(
-                                        durationMillis = 360,
+                                        durationMillis = NAV_FADE_DURATION_MILLIS,
                                         easing = LinearOutSlowInEasing
                                     )
                                 )) togetherWith (slideOutOfContainer(
                                     towards = AnimatedContentTransitionScope.SlideDirection.Start,
                                     animationSpec = tween(
-                                        durationMillis = 480,
+                                        durationMillis = NAV_SLIDE_DURATION_MILLIS,
                                         easing = FastOutSlowInEasing
                                     ),
                                     targetOffset = { fullWidth -> fullWidth / 4 }
                                 ) + fadeOut(
                                     animationSpec = tween(
-                                        durationMillis = 360,
+                                        durationMillis = NAV_FADE_DURATION_MILLIS,
                                         easing = LinearOutSlowInEasing
                                     )
                                 ))
@@ -658,22 +677,22 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                                 if (configuration.theme.isEInkMode) eInkNoTransition else (slideIntoContainer(
                                     towards = AnimatedContentTransitionScope.SlideDirection.Start,
                                     animationSpec = tween(
-                                        durationMillis = 480,
+                                        durationMillis = NAV_SLIDE_DURATION_MILLIS,
                                         easing = FastOutSlowInEasing
                                     ),
                                     initialOffset = { fullWidth -> -fullWidth / 4 }
                                 ) + fadeIn(
                                     animationSpec = tween(
-                                        durationMillis = 360,
+                                        durationMillis = NAV_FADE_DURATION_MILLIS,
                                         easing = LinearOutSlowInEasing
                                     )
                                 )) togetherWith (scaleOut(
                                     targetScale = 0.8f,
                                     animationSpec = tween(
-                                        durationMillis = 480,
+                                        durationMillis = NAV_SLIDE_DURATION_MILLIS,
                                         easing = FastOutSlowInEasing
                                     )
-                                ) + fadeOut(animationSpec = tween(durationMillis = 360)))
+                                ) + fadeOut(animationSpec = tween(durationMillis = NAV_FADE_DURATION_MILLIS)))
                             },
                             predictivePopTransitionSpec = { _ ->
                                 if (configuration.theme.isEInkMode) eInkNoTransition else (slideIntoContainer(
@@ -723,23 +742,26 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                                 capsuleAnchorPreview = capsuleAnchorPreview,
                             )
                         )
-                        // 书页之外常驻时使用阅读器同款 morph 控件；首页走完全可控播放，
-                        // 胶囊的位置由设置页实时预览，首页多返回一个同步。
-                        CompositionLocalProvider(
-                            LocalReadAloudMorph provides readAloudMorph.takeIf { !useHomeCapsule }
-                        ) {
-                            ReadAloudShellHost(
-                                showCapsule = pageShellShowCapsule,
-                                hidden = useHomeCapsule,
-                                anchorPreview = capsuleAnchorPreview,
-                                onCapsulePositionChanged = { x, y ->
-                                    pageShellCapsuleScope.launch {
-                                        readAloudSettingsRepository.putCapsulePosition(x, y)
-                                    }
-                                },
-                                onOpenPlayer = { ReadAloudPlayerOverlayBus.request(it) },
-                            )
+                    }
+                    // 全局胶囊与导航容器并列，始终画在阅读等 Nav3 叠层之上。
+                    // 主页开启悬浮底栏时仍使用主页自己的圆形胶囊。
+                    CompositionLocalProvider(
+                        // 收起完成后不再用残留进度给可点击胶囊加透明层。
+                        LocalReadAloudMorph provides readAloudMorph.takeIf {
+                            !useHomeCapsule && (playerVisible || readAloudMorph.progress.isRunning)
                         }
+                    ) {
+                        ReadAloudShellHost(
+                            showCapsule = pageShellShowCapsule,
+                            hidden = useHomeCapsule,
+                            anchorPreview = capsuleAnchorPreview,
+                            onCapsulePositionChanged = { x, y ->
+                                pageShellCapsuleScope.launch {
+                                    readAloudSettingsRepository.putCapsulePosition(x, y)
+                                }
+                            },
+                            onOpenPlayer = { ReadAloudPlayerOverlayBus.request(it) },
+                        )
                     }
                     // 听书播放页：同窗口 morph 面板，从胶囊位置长出来。
                     if (playerSource == PlaybackCapsuleSource.ReadAloud) ReadAloudPlayerMorphHost(
@@ -763,6 +785,29 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                                 )
                             }
                         },
+                        onOpenTtsEnginesAndVoices = { bookUrl ->
+                            MainNavigator.navigateToRoute(
+                                backStack,
+                                MainRouteCloudTtsEngines(bookUrl.takeIf(String::isNotBlank)),
+                                navRouteTracker,
+                            )
+                        },
+                        onOpenTtsCache = {
+                            MainNavigator.navigateToRoute(
+                                backStack,
+                                MainRouteTtsCache,
+                                navRouteTracker,
+                            )
+                        },
+                        onOpenBookVoiceCasting = { bookUrl ->
+                            if (bookUrl.isNotBlank()) {
+                                MainNavigator.navigateToRoute(
+                                    backStack,
+                                    MainRouteBookVoiceCasting(bookUrl),
+                                    navRouteTracker,
+                                )
+                            }
+                        },
                     )
                     if (playerSource == PlaybackCapsuleSource.AudioBook &&
                         (audioPlayerVisible || morphPresent)
@@ -782,7 +827,9 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                 }
                 BackHandler(
                     enabled = shouldHandleActivityBack(
-                        configuration.appShell.predictiveBackEnabled, playerVisible || morphPresent,
+                        predictiveBackEnabled = configuration.appShell.predictiveBackEnabled,
+                        playerPresent = playerVisible || morphPresent,
+                        isRoot = backStack.size <= 1,
                     )
                 ) {
                     MainNavigator.navigateBack(this@MainActivity, backStack)

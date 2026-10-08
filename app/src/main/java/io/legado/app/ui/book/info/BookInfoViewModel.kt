@@ -450,11 +450,6 @@ class BookInfoViewModel(
             is BookInfoIntent.SaveCover -> {
                 saveCoverToGallery(intent.path)
             }
-            is BookInfoIntent.ConfirmDelete -> {
-                dismissDialog()
-                deleteBook(intent.deleteOriginal)
-            }
-
             is BookInfoIntent.UpdateRemark -> {
                 dismissDialog()
                 saveRemark(intent.remark)
@@ -488,9 +483,10 @@ class BookInfoViewModel(
 
             is BookInfoIntent.OpenShelfDuplicate -> openShelfDuplicate(intent.summary)
 
-            BookInfoIntent.ShelfActionsGroup -> setSheet(BookInfoSheet.GroupPicker)
-
-            BookInfoIntent.ShelfActionsDelete -> onShelfActionsDelete()
+            is BookInfoIntent.ShelfDeleteConfirm -> {
+                dismissSheet()
+                deleteBook(intent.deleteOriginal)
+            }
 
             is BookInfoIntent.OpenShelfConflictBook -> {
                 // 先收起冲突 Sheet 再导航：详情页之间跳转会复用同一份冲突状态，
@@ -1277,13 +1273,18 @@ class BookInfoViewModel(
 
     private fun refreshMeta(book: Book) {
         execute {
+            val kindBefore = book.kind
             book.upKind()
             val userGroupIds = bookGroupRepository.getIdsSum()
             val groupAnd = userGroupIds and book.group
             val hasCustomGroup = book.group > 0L && groupAnd != 0L
             val groupNames = bookGroupRepository.getGroupNames(book.group).joinToString(",")
             val normalizedGroupNames = groupNames.ifBlank { null }
-            bookRepository.update(book)
+            // 只有 upKind 真改写出过差异才落库：全行写会失效书架查询，让正在播形变转场的
+            // 书架整屏重组（同一口径见 ReadBookLoadDelegate.initData）。
+            if (book.kind != kindBefore) {
+                bookRepository.update(book)
+            }
             val finalKinds = book.getDisplayTagList()
             val enabledRules = highlightTagRuleRepository.getEnabled()
             val (highlighted, regular) = parseHighlightedTags(finalKinds, enabledRules)
@@ -1395,22 +1396,17 @@ class BookInfoViewModel(
     private fun onShelfClick() {
         val book = currentBook ?: return
         if (inBookshelf) {
-            // 已入架：先摊开「其他副本 / 分组 / 删除」。副本要切过去，删除也仍会再确认一次，
-            // 因此这里不再像以前那样点一下就直接问删不删。
-            setSheet(BookInfoSheet.ShelfActions)
+            // 已入架：摊开删除 Sheet（其他副本 / 分组 / 删除确认）。
+            // 关掉「删除前提醒」时按设置直接删，不打断。
+            if (LocalConfig.bookInfoDeleteAlert) {
+                setSheet(BookInfoSheet.ShelfDelete)
+            } else {
+                deleteBook(LocalConfig.deleteBookOriginal)
+            }
         } else if (book.isWebFile) {
             setSheet(BookInfoSheet.WebFiles(openAfterImport = false))
         } else {
             addToBookshelf()
-        }
-    }
-
-    private fun onShelfActionsDelete() {
-        dismissSheet()
-        if (LocalConfig.bookInfoDeleteAlert) {
-            showDialog(BookInfoDialog.DeleteBook(currentBook?.isLocal == true))
-        } else {
-            deleteBook(LocalConfig.deleteBookOriginal)
         }
     }
 

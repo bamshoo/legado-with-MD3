@@ -1,6 +1,5 @@
 package io.legado.app.ui.book.info
 
-import android.app.Activity
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,18 +25,19 @@ import androidx.lifecycle.lifecycleScope
 import com.script.rhino.runScriptWithContext
 import io.legado.app.R
 import io.legado.app.constant.AppLog
+import io.legado.app.core.ui.morph.BookMorphHost
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.help.book.isAudio
 import io.legado.app.help.book.isImage
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.security.BiometricUnlockLauncher
 import io.legado.app.model.SourceCallBack
-import io.legado.app.ui.book.info.edit.BookInfoEditActivity
-import io.legado.app.ui.book.toc.TocActivityResult
 import io.legado.app.ui.login.SourceLoginJsExtensions
+import io.legado.app.ui.main.bookCoverSharedElementKey
+import io.legado.app.ui.main.bookInfoCoverSharedElementKey
+import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.filePicker.FilePickerSheet
 import io.legado.app.utils.RealPathUtil
-import io.legado.app.utils.StartActivityContract
 import io.legado.app.utils.externalFiles
 import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.openFileUri
@@ -59,11 +59,13 @@ fun BookInfoRouteScreen(
     origin: String? = null,
     coverPath: String? = null,
     viewModel: BookInfoViewModel,
-    onBack: () -> Unit,
-    onFinish: (resultCode: Int?, afterTransition: Boolean) -> Unit,
+    onBack: () -> Boolean = { true },
+    onFinish: (resultCode: Int?, afterTransition: Boolean) -> Boolean = { _, _ -> true },
     onOpenSearch: (String) -> Unit,
     onOpenBookSourceEdit: (String) -> Unit,
     onOpenSourceLogin: (String) -> Unit,
+    onOpenToc: (String) -> Unit,
+    onOpenInfoEdit: (String) -> Unit,
     onOpenReader: (bookUrl: String, inBookshelf: Boolean, chapterChanged: Boolean) -> Unit = { _, _, _ -> },
     onOpenMangaReader: (bookUrl: String, inBookshelf: Boolean, chapterChanged: Boolean) -> Unit = { _, _, _ -> },
     onOpenAudioPlay: (bookUrl: String, inBookshelf: Boolean) -> Unit = { _, _ -> },
@@ -79,6 +81,10 @@ fun BookInfoRouteScreen(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
+    useCoverMorph: Boolean = true,
+    detailCoverKey: String = bookInfoCoverSharedElementKey(bookUrl),
+    predictiveBackEnabled: Boolean = true,
+    isTopRoute: Boolean = true,
 ) {
     val context = LocalContext.current
     val activity = context as AppCompatActivity
@@ -92,9 +98,39 @@ fun BookInfoRouteScreen(
     val noPasswordHint = stringResource(R.string.private_content_no_password)
     var showSelectBooksDirSheet by remember { mutableStateOf(false) }
 
-    val tocActivityResult = rememberLauncherForActivityResult(TocActivityResult()) {
-        viewModel.onTocResult(it)
+    val canMorphBack = isTopRoute &&
+            uiState.dialog == null &&
+            uiState.sheet == BookInfoSheet.None &&
+            !showSelectBooksDirSheet &&
+            !uiState.showAppLogSheet &&
+            !uiState.showPrivatePasswordDialog
+    val effectiveCoverKey = if (useCoverMorph) {
+        sharedCoverKey ?: bookCoverSharedElementKey(bookUrl)
+    } else null
+    var isDismissed by remember { mutableStateOf(false) }
+    var finishResultCode by remember { mutableStateOf<Int?>(null) }
+    var finishAfterTransition by remember { mutableStateOf(false) }
+    var collapseRequested by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val dismissBookInfo: () -> Boolean = {
+        if (isDismissed) {
+            true
+        } else {
+            onFinish(finishResultCode, finishAfterTransition).also { popped ->
+                if (popped) isDismissed = true
+            }
+        }
     }
+
+    val handleBack: () -> Unit = {
+        val collapse = collapseRequested
+        if (collapse != null && canMorphBack) {
+            collapse()
+        } else {
+            dismissBookInfo()
+        }
+    }
+
     val localBookTreeSelect =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri == null) return@rememberLauncherForActivityResult
@@ -106,13 +142,6 @@ fun BookInfoRouteScreen(
             }
             viewModel.onIntent(BookInfoIntent.SetDefaultBookTreeUri(uri.toString()))
         }
-    val infoEditResult = rememberLauncherForActivityResult(
-        StartActivityContract(BookInfoEditActivity::class.java)
-    ) {
-        if (it.resultCode == Activity.RESULT_OK) {
-            viewModel.onInfoEdited()
-        }
-    }
 
     LaunchedEffect(bookUrl, name, author, origin, coverPath, viewModel) {
         viewModel.initData(
@@ -142,13 +171,18 @@ fun BookInfoRouteScreen(
             when (effect) {
                 is BookInfoEffect.ShowMessage -> context.toastOnUi(effect.message)
                 is BookInfoEffect.Finish -> {
-                    onFinish(effect.resultCode, effect.afterTransition)
+                    finishResultCode = effect.resultCode
+                    finishAfterTransition = effect.afterTransition
+                    val collapse = collapseRequested
+                    if (collapse != null && canMorphBack) {
+                        collapse()
+                    } else {
+                        dismissBookInfo()
+                    }
                 }
 
                 is BookInfoEffect.OpenBookInfoEdit -> {
-                    infoEditResult.launch {
-                        putExtra("bookUrl", effect.bookUrl)
-                    }
+                    onOpenInfoEdit(effect.bookUrl)
                 }
 
                 is BookInfoEffect.OpenReader -> {
@@ -175,7 +209,9 @@ fun BookInfoRouteScreen(
                     }
                 }
 
-                is BookInfoEffect.OpenToc -> tocActivityResult.launch(effect.bookUrl)
+                is BookInfoEffect.OpenToc -> {
+                    onOpenToc(effect.bookUrl)
+                }
                 is BookInfoEffect.OpenBookSourceEdit -> {
                     onOpenBookSourceEdit(effect.sourceUrl)
                 }
@@ -249,25 +285,37 @@ fun BookInfoRouteScreen(
         }
     }
 
-    FilePickerSheet(
-        show = showSelectBooksDirSheet,
-        onDismissRequest = { showSelectBooksDirSheet = false },
-        title = stringResource(R.string.select_book_folder),
-        onSelectSysDir = {
-            showSelectBooksDirSheet = false
-            localBookTreeSelect.launch(null)
-        },
-    )
-    BookInfoScreen(
-        state = uiState,
-        groups = viewModel.allGroups
-            .collectAsStateWithLifecycle(persistentListOf<BookGroup>()).value,
-        onIntent = viewModel::onIntent,
-        onBack = onBack,
-        sharedTransitionScope = sharedTransitionScope,
-        animatedVisibilityScope = animatedVisibilityScope,
-        sharedCoverKey = sharedCoverKey,
-    )
+    BookMorphHost(
+        anchorKey = effectiveCoverKey,
+        backgroundColor = LegadoTheme.colorScheme.background,
+        backEnabled = canMorphBack,
+        predictiveBackEnabled = predictiveBackEnabled,
+        hasTargetCover = true,
+        onDismiss = dismissBookInfo,
+    ) { onCollapse ->
+        LaunchedEffect(onCollapse) {
+            collapseRequested = onCollapse
+        }
+        FilePickerSheet(
+            show = showSelectBooksDirSheet,
+            onDismissRequest = { showSelectBooksDirSheet = false },
+            title = stringResource(R.string.select_book_folder),
+            onSelectSysDir = {
+                showSelectBooksDirSheet = false
+                localBookTreeSelect.launch(null)
+            },
+        )
+        BookInfoScreen(
+            state = uiState,
+            groups = viewModel.allGroups
+                .collectAsStateWithLifecycle(persistentListOf<BookGroup>()).value,
+            onIntent = viewModel::onIntent,
+            onBack = handleBack,
+            sharedTransitionScope = null,
+            animatedVisibilityScope = null,
+            sharedCoverKey = detailCoverKey,
+        )
+    }
 }
 
 private fun runSourceCallback(

@@ -138,6 +138,8 @@ class ReadBookViewModel(
     private val aiProfileGateway: AiProfileGateway,
     private val syncReadAloudVoicesUseCase: SyncReadAloudVoicesUseCase,
     private val readAloudSessionStore: ReadAloudSessionStore,
+    private val aiCastAssignUseCase: io.legado.app.help.readaloud.cast.AiCastAssignUseCase,
+    private val aiSceneAssignUseCase: io.legado.app.help.readaloud.cast.AiSceneAssignUseCase,
     private val replaceRuleRepository: ReplaceRuleRepository,
     private val changeSourceSettingsGateway: ChangeSourceSettingsGateway,
     private val appShellSettingsGateway: AppShellSettingsGateway,
@@ -157,6 +159,19 @@ class ReadBookViewModel(
 
     private val _uiState = MutableStateFlow(ReadBookUiState())
     val uiState = _uiState.asStateFlow()
+
+    /**
+     * 页眉页脚要烘进 `LegacyReaderPageDecorationFactory` decoration 的时钟与电量：
+     * 只有 `ReadBookController` 直读，刷新由 `ReadBookEffect.UpTime` / `UpBattery`
+     * 重发页窗驱动。不进 `uiState`——一次广播就重组整屏。
+     */
+    @Volatile
+    var pageTime: String = ""
+        private set
+    @Volatile
+    var pageBatteryPercent: Int = 0
+        private set
+
     private val _effects = MutableSharedFlow<ReadBookEffect>(extraBufferCapacity = 16)
     val effects = _effects.asSharedFlow()
     private var composePagePosition: ReaderChapterPagePosition? = null
@@ -344,6 +359,18 @@ class ReadBookViewModel(
     ) }
 
     val highlightRuleState get() = highlightRuleDelegate.uiState
+
+    // --- 多角色分配域 ---
+
+    private val readAloudCastDelegate by lazy { ReadAloudCastDelegate(
+        context = context,
+        scope = viewModelScope,
+        aiCastUseCase = aiCastAssignUseCase,
+        aiSceneUseCase = aiSceneAssignUseCase,
+        reloadChapter = { contentProcessDelegate.reloadCurrentChapter() },
+        sendIntent = { onIntent(it) },
+        emitToast = { _effects.tryEmit(ReadBookEffect.ShowToast(it)) },
+    ) }
 
     // --- 正文编辑域 ---
 
@@ -594,6 +621,11 @@ class ReadBookViewModel(
     private val _readPreferences = MutableStateFlow(ReadPreferences())
     val readPreferences = _readPreferences.asStateFlow()
 
+    private val _seekState = MutableStateFlow(ReadSeekUiState())
+
+    /** 见 [ReadSeekUiState]：底栏进度条/锚点胶囊专用，翻页与拖动每刷新一次都不该重组整屏。 */
+    val seekState = _seekState.asStateFlow()
+
     private var pendingBooksDirReloadChapterList: Boolean = false
     private var deferredReaderFeaturesStarted = false
 
@@ -612,6 +644,13 @@ class ReadBookViewModel(
         }
     }
 
+    /** 云端进度同步域；投影目标 isReadingProgressSyncConfigured 仍留在 UiState 供菜单读。 */
+    private val readingProgressSyncDelegate by lazy {
+        ReadingProgressSyncDelegate(viewModelScope, getReadingProgressUseCase) { configured ->
+            _uiState.update { it.copy(isReadingProgressSyncConfigured = configured) }
+        }
+    }
+
     init {
         // 订阅必须早于 attach()：会话事件用 tryEmit 投递，没有订阅者会被丢弃。
         // viewModelScope 是 Main.immediate，VM 在主线程构造，故 launch 会同步跑到
@@ -623,6 +662,7 @@ class ReadBookViewModel(
         collectEventBus()
         collectReaderSession()
         collectReadStyle()
+        readingProgressSyncDelegate.start()
         replaceRuleDelegate.start()
     }
 
@@ -637,22 +677,19 @@ class ReadBookViewModel(
     }
 
     /**
-     * 消费 [ReadStyleGateway.state]（Track E · E2）：排版配置的唯一变更通知。
+     * 消费 [ReadStyleGateway.state]：排版配置的唯一变更通知。
      *
-     * 排版底座 `ReadBookConfig.Config` 是可变全局、无 flow，此前 UiState 里的
-     * [ReadBookStyleConfig] / [ReadSheetConfigUiState] 只能靠各写入站点手工重建——
-     * 13 处重建 `styleConfig`、**只有 1 处**重建 `sheetConfig`（`syncFromReadBook`），
-     * 于是编辑排版后重开弹层显示的是旧值。
+     * 排版底座 `ReadBookConfig.Config` 是可变全局、无 flow，UiState 里的
+     * [ReadBookStyleConfig] / [ReadSheetConfigUiState] 两份快照由 gateway 的
+     * `publishState()` 统一驱动重建：写入必经 gateway，gateway 必发 state，这里必然重建两份快照；
+     * 新增写入路径若绕过 gateway，就必须自行触发重建，否则快照是旧值。
      *
-     * 改由 gateway 的 `publishState()` 统一驱动后，「新增写入路径忘了重建快照」这个
-     * 失效类别不再存在：写入必经 gateway，gateway 必发 state，这里必然重建两份快照。
-     *
-     * R1.1 收敛后全 VM 只允许三处重建触发，删任何一处前先确认其路径已被其余覆盖：
+     * 全 VM 只允许三处重建触发，删任何一处前先确认其路径已被其余覆盖：
      * 1. 本 collector——一切经 gateway 的排版写入（编辑/预设/删除/导入，repository 必 publishState）；
      * 2. [collectEventBus] 的 [ReadConfigUpdateBus] collector——不经 gateway 的全局变更
      *    （日夜切换等，revision 不递增，gateway flow 不会发射）；
      * 3. [handleConfigUpdate] 尾部 `styleMutation == null` 分支——只写 DataStore 的更新。
-     * `syncFromReadBook` 不再重建（曾经的每翻页兜底会掩盖漏发问题）。
+     * `syncFromReadBook` 不触发重建：每翻页兜底会掩盖上面漏发通知的路径。
      */
     private fun collectReadStyle() {
         viewModelScope.launch {
@@ -668,7 +705,7 @@ class ReadBookViewModel(
     }
 
     /**
-     * 消费 [ReaderSession.state]（Track A A5）：会话快照在任意受控 mutator 完成后发射，
+     * 消费 [ReaderSession.state]：会话快照在任意受控 mutator 完成后发射，
      * 据此驱动 UiState 刷新。与遗留 CallBack 刷新路径叠加、幂等（相同结果 StateFlow 不再发），
      * 收集在 mutator 返回之后异步触发，故 syncFromReadBook 读到的 ReadBook 字段已是最终态。
      */
@@ -686,15 +723,15 @@ class ReadBookViewModel(
         readBookSyncJob?.cancel()
         readBookSyncJob = viewModelScope.launch {
             delay(READER_SYNC_MIN_INTERVAL_MS)
-            _uiState.update { syncFromReadBook(it) }
+            refreshFromReadBook()
         }
     }
 
     /**
-     * 消费 [ReaderSession.events]（R2.3）：遗留 [ReadBook.CallBack] 的四个回调。
+     * 消费 [ReaderSession.events]：遗留 [ReadBook.CallBack] 的四个回调。
      *
-     * VM 不再实现 `ReadBook.CallBack`——`ReadBook.callBack` 现在指向本 VM 持有的
-     * [LegacyReaderSession]。回调体原样搬过来，只是从「在 ReadBook 的调用线程上同步执行」
+     * VM 不实现 `ReadBook.CallBack`——`ReadBook.callBack` 指向本 VM 持有的
+     * [LegacyReaderSession]。回调体在本 VM 原样执行，只是时机从「在 ReadBook 的调用线程上同步执行」
      * 变成「在主线程上晚一个派发执行」。
      */
     private fun collectReaderSessionEvents() {
@@ -710,7 +747,7 @@ class ReadBookViewModel(
                     is ReaderSessionEvent.ChapterListRequested -> loadChapterList(event.book)
 
                     is ReaderSessionEvent.BookChanged -> {
-                        _uiState.update { syncFromReadBook(it) }
+                        refreshFromReadBook()
                         if (!ReadBook.inBookshelf) {
                             removeFromBookshelf { _effects.tryEmit(ReadBookEffect.Finish) }
                         }
@@ -745,17 +782,21 @@ class ReadBookViewModel(
                 openChapter(intent.index, intent.pos)
             }
             is ReadBookIntent.SkipToPage -> ReadBook.skipToPage(intent.pageIndex)
-            is ReadBookIntent.ToggleMenu -> _uiState.update {
-                if (it.menuVisible) {
-                    readBookStyleConfigRepository.save()
-                    it.copy(menuState = ReadBookMenuState())
+            is ReadBookIntent.ToggleMenu -> {
+                if (_uiState.value.menuVisible) {
+                    _uiState.update {
+                        readBookStyleConfigRepository.save()
+                        it.copy(menuState = ReadBookMenuState())
+                    }
                 } else {
-                    it.copy(menuState = ReadBookMenuState(visible = true))
+                    ensureReadingProgressSyncConfigured()
+                    _uiState.update { it.copy(menuState = ReadBookMenuState(visible = true)) }
                 }
             }
 
-            is ReadBookIntent.ShowMenu -> _uiState.update {
-                it.copy(menuState = ReadBookMenuState(visible = true))
+            is ReadBookIntent.ShowMenu -> {
+                ensureReadingProgressSyncConfigured()
+                _uiState.update { it.copy(menuState = ReadBookMenuState(visible = true)) }
             }
 
             is ReadBookIntent.HideMenu -> _uiState.update {
@@ -856,6 +897,7 @@ class ReadBookViewModel(
                 _uiState.update {
                     syncFromReadBook(it).copy(activeDialog = null)
                 }
+                publishSeek()
             }
 
             is ReadBookIntent.KeepCurrentBookProgress -> {
@@ -863,6 +905,7 @@ class ReadBookViewModel(
                 _uiState.update {
                     syncFromReadBook(it).copy(activeDialog = null)
                 }
+                publishSeek()
             }
 
             is ReadBookIntent.ToggleReadAloud -> {
@@ -941,7 +984,7 @@ class ReadBookViewModel(
             is ReadBookIntent.ReplaceRuleResult -> replaceRuleDelegate.rulesChanged()
             is ReadBookIntent.BookInfoResult -> {
                 if (intent.bookDeleted) {
-                    _effects.tryEmit(ReadBookEffect.Finish)
+                    viewModelScope.launch { emitEffectWhenSubscribed(ReadBookEffect.Finish) }
                 } else {
                     ReadBook.loadOrUpContent()
                 }
@@ -1078,13 +1121,13 @@ class ReadBookViewModel(
                 }
             }
 
-            is ReadBookIntent.MenuCoverProgress -> {
-                ReadBook.book?.let {
-                    ReadBook.uploadProgress(true) {
-                        _effects.tryEmit(
-                            ReadBookEffect.ShowToast(context.getString(R.string.upload_book_success))
-                        )
-                    }
+            is ReadBookIntent.MenuCoverProgress -> if (ReadBook.book != null) viewModelScope.launch {
+                // 覆盖云端进度直接走 AppWebDav，必须先等云端初始化结束，否则上传被静默丢弃
+                readingProgressSyncDelegate.ensureConfiguredNow()
+                ReadBook.uploadProgress(true) {
+                    _effects.tryEmit(
+                        ReadBookEffect.ShowToast(context.getString(R.string.upload_book_success))
+                    )
                 }
             }
 
@@ -1368,6 +1411,19 @@ class ReadBookViewModel(
             is ReadBookIntent.SetSpeechAnalysisReasoningLevel -> readAloudDelegate.setSpeechAnalysisReasoningLevel(intent.value)
             is ReadBookIntent.SetUseMultiSpeaker ->
                 readAloudDelegate.setUseMultiSpeaker(intent.value)
+            is ReadBookIntent.SetMultiRoleCast ->
+                readAloudDelegate.setMultiRoleCast(intent.value)
+            is ReadBookIntent.SetBgmAssign -> readAloudDelegate.setBgmAssign(intent.value)
+            is ReadBookIntent.SetBgmVolume -> readAloudDelegate.setBgmVolume(intent.value)
+            is ReadBookIntent.ConfirmRoleCast -> readAloudCastDelegate.confirm(intent)
+            is ReadBookIntent.CreateRoleCast -> readAloudCastDelegate.create(intent)
+            ReadBookIntent.OpenAiCastDialog,
+            ReadBookIntent.OpenAiSceneDialog, ReadBookIntent.CancelAiCast,
+            is ReadBookIntent.StartAiCast, is ReadBookIntent.DeleteChapterCastAssignments,
+            is ReadBookIntent.UnassignRoleCast, is ReadBookIntent.SetBgmScene,
+            is ReadBookIntent.ClearBgmScene, is ReadBookIntent.UpdateBgmScene,
+            is ReadBookIntent.DeleteBgmScene -> readAloudCastDelegate.onCastIntent(intent)
+            is ReadBookIntent.SetReadAloudConfigTab -> readAloudDelegate.setConfigTab(intent.tab)
             is ReadBookIntent.SetDefaultReadAloudInterface ->
                 readAloudDelegate.setDefaultInterface(intent.value)
             is ReadBookIntent.OpenSystemTtsSettings -> readAloudDelegate.openSystemTtsSettings()
@@ -1609,6 +1665,7 @@ class ReadBookViewModel(
 
         // Read time tracking
         ReadBook.isUiActive = false
+        // 进度在离开页面时落库；开书流程本身不落，口径见 ReadBookLoadDelegate.initData。
         ReadBook.saveRead()
         if (!BaseReadAloudService.isPlay()) {
             ReadBook.stopAutoSaveSession()
@@ -1690,15 +1747,15 @@ class ReadBookViewModel(
         }
     }
 
-    // --- ReadBook 回调（已全部离开本 ViewModel）---
+    // --- ReadBook 回调（归属见下）---
     //
-    // Track B2：渲染子集（upContent/upContentAwait/pageChanged/contentLoadFinish/
-    // upPageAnim/cancelSelect/onLayoutPageCompleted）下沉到 UI 层渲染控制器
+    // 渲染子集（upContent/upContentAwait/pageChanged/contentLoadFinish/
+    // upPageAnim/cancelSelect/onLayoutPageCompleted）归 UI 层渲染控制器
     // （ReadBook.renderCallBack）。
-    // R2.3：状态子集（upMenuView/loadChapterList/notifyBookChanged/sureNewProgress）
-    // 迁入 LegacyReaderSession，本 VM 改为订阅 collectReaderSessionEvents()。
+    // 状态子集（upMenuView/loadChapterList/notifyBookChanged/sureNewProgress）
+    // 归 LegacyReaderSession，本 VM 通过 collectReaderSessionEvents() 订阅。
     // 业务状态刷新另有 collectReaderSession() 反应式收集 ReadBook.snapshot 驱动。
-    // 下面两个不再是 override——除了会话事件，VM 自己也在若干处直接调用。
+    // 下面两个是私有函数而非 override——除了会话事件，VM 自己也在若干处直接调用。
 
     private fun loadChapterList(book: Book) {
         ReadBook.upMsg(context.getString(R.string.toc_updateing))
@@ -1742,13 +1799,13 @@ class ReadBookViewModel(
     private fun collectEventBus() {
         viewModelScope.launch {
             eventFlow<String>(EventBus.TIME_CHANGED).collect { time ->
-                _uiState.update { it.copy(time = time) }
+                pageTime = time
                 _effects.tryEmit(ReadBookEffect.UpTime)
             }
         }
         viewModelScope.launch {
             eventFlow<Int>(EventBus.BATTERY_CHANGED).collect { level ->
-                _uiState.update { it.copy(battery = level) }
+                pageBatteryPercent = level
                 _effects.tryEmit(ReadBookEffect.UpBattery(level))
             }
         }
@@ -1811,7 +1868,7 @@ class ReadBookViewModel(
         }
         viewModelScope.launch {
             eventFlow<Boolean>(EventBus.UP_SEEK_BAR).collect {
-                _uiState.update { syncFromReadBook(it) }
+                refreshFromReadBook()
                 _effects.tryEmit(ReadBookEffect.UpSeekBar)
             }
         }
@@ -1843,7 +1900,7 @@ class ReadBookViewModel(
                 val old = previous
                 previous = preferences
                 _readPreferences.value = preferences
-                _uiState.update { syncFromReadBook(it) }
+                refreshFromReadBook()
                 if (!preferences.hasMenuClickArea()) {
                     readSettingsRepository.setClickAction(PreferKey.clickActionMC, 0)
                 }
@@ -1997,11 +2054,28 @@ class ReadBookViewModel(
             .toImmutableList(),
     )
 
+    /**
+     * uiState 快照与 [seekState] 一起同步。定位字段独立成流（见 [ReadSeekUiState]）之后，
+     * 每个投影 `syncFromReadBook` 的发布点都必须顺带刷新它，否则进度条会停在旧位置。
+     */
+    private fun refreshFromReadBook() {
+        _uiState.update { syncFromReadBook(it) }
+        publishSeek()
+    }
+
+    private fun publishSeek() {
+        _seekState.update {
+            it.copy(
+                seekProgress = calculateSeekProgress(),
+                seekMax = calculateSeekMax(),
+                readingAnchorAvailable = ReadBook.hasReadingAnchor(),
+            )
+        }
+    }
+
     private fun syncFromReadBook(current: ReadBookUiState): ReadBookUiState {
         val book = ReadBook.book
         val chapterInput = ReadBook.readerChapterInputWindow.current
-        val canvasPage = composePagePosition
-            ?.takeIf { it.chapterIndex == ReadBook.durChapterIndex }
         val translationStatus = aiDelegate.observeChapterTranslation(book, ReadBook.durChapterIndex)
         return current.copy(
             book = book,
@@ -2012,12 +2086,8 @@ class ReadBookViewModel(
             chapterSize = ReadBook.chapterSize,
             durChapterIndex = ReadBook.durChapterIndex,
             durChapterPos = ReadBook.durChapterPos,
-            durPageIndex = canvasPage?.pageIndex ?: ReadBook.durPageIndex,
             isLocalBook = ReadBook.isLocalBook,
             msg = ReadBook.msg,
-            seekProgress = calculateSeekProgress(),
-            seekMax = calculateSeekMax(),
-            readingAnchorAvailable = ReadBook.hasReadingAnchor(),
             readAloudDetachReminderEnabled = ReadBookConfig.readAloudDetachReminderEnabled,
             replaceRuleEnabled = book?.getUseReplaceRule(
                 otherSettingsGateway.currentSettings.replaceEnableDefault
@@ -2107,20 +2177,19 @@ class ReadBookViewModel(
         }
     }
 
-    // --- Business Logic (migrated from Activity / kept from old ViewModel) ---
+    // --- Business Logic ---
 
     /**
      * 当前会话书籍的当前章节。
      *
-     * R2.1：VM 不再直连 Room DAO，书籍/目录读写一律经 [BookRepository]。
-     * 原来散在十余处的 `getChapter(book.bookUrl, ReadBook.durChapterIndex)` 收敛到这里。
+     * VM 不直连 Room DAO，书籍/目录读写一律经 [BookRepository]；取当前章统一从这里走。
      */
     private suspend fun currentChapter(): BookChapter? {
         val book = ReadBook.book ?: return null
         return bookRepository.getChapter(book.bookUrl, ReadBook.durChapterIndex)
     }
 
-    // 开书 / 目录 / 换源 / 进度同步已迁入 [ReadBookLoadDelegate]，这里只留外部入口的转发。
+    // 开书 / 目录 / 换源 / 进度同步归 [ReadBookLoadDelegate]，这里只留外部入口的转发。
 
     suspend fun initReadBookConfig(request: ReadBookInitRequest) =
         loadDelegate.initReadBookConfig(request)
@@ -2129,7 +2198,10 @@ class ReadBookViewModel(
         request: ReadBookInitRequest,
         initialBook: Book? = null,
         success: (() -> Unit)? = null,
-    ) = loadDelegate.initData(request, initialBook, success)
+    ) {
+        _uiState.update { it.copy(inBookshelf = request.inBookshelf) }
+        loadDelegate.initData(request, initialBook, success)
+    }
 
     fun markJustInitData() {
         justInitData = true
@@ -2140,6 +2212,9 @@ class ReadBookViewModel(
     fun changeTo(book: Book) = loadDelegate.changeTo(book)
 
     fun isReadingProgressSyncConfigured(): Boolean = loadDelegate.isReadingProgressSyncConfigured()
+
+    /** 打开阅读菜单时补齐云端配置（上游 `onPrepareOptionsMenu` 的重算时机）。 */
+    fun ensureReadingProgressSyncConfigured() = readingProgressSyncDelegate.ensureConfigured()
 
     suspend fun uploadBookProgress(book: Book) = loadDelegate.uploadBookProgress(book)
 
@@ -2200,7 +2275,7 @@ class ReadBookViewModel(
             }
             ReadBook.inBookshelf = true
         }.onSuccess {
-            _uiState.update { it.copy(activeDialog = null) }
+            _uiState.update { it.copy(activeDialog = null, inBookshelf = true) }
             stopReadAloudForClose()
             _effects.tryEmit(ReadBookEffect.Finish)
         }.onError {
@@ -2435,18 +2510,15 @@ class ReadBookViewModel(
         }
     }
 
-    fun refreshSeekState() {
-        _uiState.update {
-            it.copy(seekProgress = calculateSeekProgress(), seekMax = calculateSeekMax())
-        }
-    }
+    fun refreshSeekState() = publishSeek()
 
     fun updateComposeReaderPage(position: ReaderChapterPagePosition?, pageContext: ReaderPageContext?) {
         composePagePosition = position
         composePageContext = pageContext
         if (position == null || position.chapterIndex != ReadBook.durChapterIndex) return
-        // 滚动热路径每次跨页都会调用；进度 UI(_uiState) 是整屏重组源，延迟到节拍
-        // 间隙发布。composePagePosition/Context 已同步更新，直读字段的路径不受影响。
+        // 滚动热路径每次跨页都会调用，所以延迟到节拍间隙再发布，不与滚动争主线程。
+        // 发布只写 [seekState]（底栏进度条与锚点胶囊各自收集，见 ReadSeekUiState）；
+        // composePagePosition/Context 已同步更新，直读字段的路径不受影响。
         composeProgressJob?.cancel()
         composeProgressJob = viewModelScope.launch {
             delay(250L)
@@ -2456,20 +2528,13 @@ class ReadBookViewModel(
 
     private fun publishComposeProgress() {
         val position = composePagePosition?.takeIf { it.chapterIndex == ReadBook.durChapterIndex } ?: return
-        _uiState.update { state ->
-            state.copy(
-                durPageIndex = position.pageIndex,
-                seekProgress = if (readSettingsRepository.currentSettings.progressBarBehavior == "page") {
-                    position.pageIndex
-                } else {
-                    state.seekProgress
-                },
-                seekMax = if (readSettingsRepository.currentSettings.progressBarBehavior == "page") {
-                    position.pageCount.coerceAtLeast(1) - 1
-                } else {
-                    state.seekMax
-                },
-            )
+        if (readSettingsRepository.currentSettings.progressBarBehavior == "page") {
+            _seekState.update {
+                it.copy(
+                    seekProgress = position.pageIndex,
+                    seekMax = position.pageCount.coerceAtLeast(1) - 1,
+                )
+            }
         }
     }
 

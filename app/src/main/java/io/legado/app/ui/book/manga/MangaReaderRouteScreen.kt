@@ -3,16 +3,20 @@ package io.legado.app.ui.book.manga
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.compose.LocalActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -20,14 +24,14 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chrisbanes.haze.HazeState
 import io.legado.app.constant.BookType
+import io.legado.app.core.ui.morph.BookMorphHost
+import io.legado.app.core.ui.morph.LocalBookMorph
 import io.legado.app.model.SourceCallBack
 import io.legado.app.receiver.NetworkChangedListener
 import io.legado.app.ui.book.read.sheet.ReaderBookSheetRoute
 import io.legado.app.ui.book.read.sheet.ReaderBookSheetTab
-import io.legado.app.ui.book.toc.TocActivityResult
 import io.legado.app.ui.main.AndroidPlatformCapabilities
 import io.legado.app.ui.main.MainActivity
-import io.legado.app.ui.main.readerSharedBounds
 import io.legado.app.utils.NetworkUtils
 import io.legado.app.utils.openUrl
 import io.legado.app.utils.share
@@ -43,11 +47,14 @@ fun MangaReaderRouteScreen(
     openRequestId: Long,
     viewModel: MangaReaderViewModel,
     restoreSystemBarsVisible: Boolean,
+    predictiveBackEnabled: Boolean = true,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
-    onFinish: (bookshelfChanged: Boolean) -> Unit,
+    isTopRoute: Boolean = true,
+    onFinish: (bookshelfChanged: Boolean) -> Boolean,
     onOpenBookInfo: (name: String, author: String, bookUrl: String) -> Unit,
+    onOpenToc: (bookUrl: String, initialPage: Int) -> Unit,
     onOpenSourceLogin: (sourceUrl: String) -> Unit,
     onOpenSourceEdit: (sourceUrl: String) -> Unit,
     onOpenWebView: (
@@ -63,12 +70,8 @@ fun MangaReaderRouteScreen(
     val platformCapabilities = remember(activity) { AndroidPlatformCapabilities(activity) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val currentIsTopRoute by rememberUpdatedState(isTopRoute)
     val networkChangedListener = remember(activity) { NetworkChangedListener(activity) }
-    val tocLauncher = rememberLauncherForActivityResult(TocActivityResult()) { result ->
-        result?.let { (chapterIndex, chapterPos, _) ->
-            viewModel.onIntent(MangaReaderIntent.OpenChapter(chapterIndex, chapterPos))
-        }
-    }
 
     LaunchedEffect(viewModel, bookUrl, inBookshelf, chapterChanged, openRequestId) {
         viewModel.onIntent(
@@ -76,11 +79,34 @@ fun MangaReaderRouteScreen(
         )
     }
 
-    LaunchedEffect(viewModel) {
+    var isDismissed by remember { mutableStateOf(false) }
+    var bookshelfChangedResult by remember { mutableStateOf(false) }
+    var collapseTrigger by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val dismissManga: () -> Boolean = {
+        if (isDismissed) {
+            true
+        } else {
+            // Finish already means that adding/discarding the book succeeded. UI state
+            // may still contain the pre-add snapshot; it must not initiate another delete.
+            onFinish(bookshelfChangedResult).also { popped ->
+                if (popped) isDismissed = true
+            }
+        }
+    }
+
+    LaunchedEffect(viewModel, collapseTrigger) {
         viewModel.effects.collectLatest { effect ->
             val currentState = viewModel.uiState.value
             when (effect) {
-                is MangaReaderEffect.Finish -> onFinish(effect.bookshelfChanged)
+                is MangaReaderEffect.Finish -> {
+                    bookshelfChangedResult = effect.bookshelfChanged
+                    val collapse = collapseTrigger
+                    if (collapse != null) {
+                        collapse.invoke()
+                    } else {
+                        dismissManga()
+                    }
+                }
                 MangaReaderEffect.OpenBookInfo -> {
                     if (currentState.bookUrl.isNotEmpty()) {
                         onOpenBookInfo(
@@ -186,6 +212,7 @@ fun MangaReaderRouteScreen(
     DisposableEffect(activity, viewModel, restoreSystemBarsVisible) {
         val originalBrightness = activity.window.attributes.screenBrightness
         activity.activeMangaKeyHandler = fun(keyCode: Int): Boolean {
+            if (!currentIsTopRoute) return false
             val settings = viewModel.uiState.value.settings
             return if (!settings.volumeKeyPage) false
             else {
@@ -208,39 +235,61 @@ fun MangaReaderRouteScreen(
         }
     }
 
-    val menuHazeState = remember { HazeState() }
-    val useMenuHaze = state.settings.menuBottomBarBlur ||
-            (!state.settings.menuBottomBarFloating &&
-                    state.settings.menuBottomBarLiquidGlass &&
-                    state.settingsCategory != null)
-    MangaReaderScreen(
-        state = state,
-        onIntent = viewModel::onIntent,
-        hazeState = if (useMenuHaze) menuHazeState else null,
-        modifier = Modifier.readerSharedBounds(
-            sharedTransitionScope,
-            animatedVisibilityScope,
-            sharedCoverKey,
-            platformCapabilities.displayCornerRadiusPx,
-            density,
-        ),
-    )
-    if (state.activeSheet == MangaReaderSheet.Catalog && state.bookUrl.isNotEmpty()) {
-        ReaderBookSheetRoute(
-            show = true,
-            bookUrl = state.bookUrl,
-            initialTab = ReaderBookSheetTab.Toc,
-            currentChapterIndex = state.pendingChapterIndex ?: state.chapterIndex,
-            onDismissRequest = { viewModel.onIntent(MangaReaderIntent.DismissSheet) },
-            onChapterClick = { chapterIndex, pageIndex ->
-                viewModel.onIntent(MangaReaderIntent.DismissSheet)
-                viewModel.onIntent(MangaReaderIntent.OpenChapter(chapterIndex, pageIndex))
-            },
-            onOpenFullBookInfo = {
-                viewModel.onIntent(MangaReaderIntent.DismissSheet)
-                onOpenBookInfo(state.bookName, state.bookAuthor, state.bookUrl)
-            },
-            onOpenFullToc = { tocLauncher.launch(state.bookUrl) },
+    val canHandleBack = isTopRoute
+    val canMorphBack = canHandleBack &&
+            state.inBookshelf &&
+            state.activeDialog == null &&
+            state.activeSheet == null &&
+            state.settingsCategory == null &&
+            !state.menuVisible
+
+    BookMorphHost(
+        anchorKey = sharedCoverKey,
+        backgroundColor = Color.Black,
+        backEnabled = canMorphBack,
+        predictiveBackEnabled = predictiveBackEnabled,
+        onDismiss = dismissManga,
+        onBackRequested = { viewModel.onIntent(MangaReaderIntent.BackPressed) },
+    ) { onCollapse ->
+        val morph = LocalBookMorph.current
+        LaunchedEffect(state.activeDialog, morph) {
+            if (state.activeDialog != null) morph?.animateTo(1f)
+        }
+        LaunchedEffect(onCollapse) {
+            collapseTrigger = onCollapse
+        }
+        val menuHazeState = remember { HazeState() }
+        val useMenuHaze = state.settings.menuBottomBarBlur ||
+                (!state.settings.menuBottomBarFloating &&
+                        state.settings.menuBottomBarLiquidGlass &&
+                        state.settingsCategory != null)
+        MangaReaderScreen(
+            state = state,
+            onIntent = viewModel::onIntent,
+            hazeState = if (useMenuHaze) menuHazeState else null,
+            modifier = Modifier.fillMaxSize(),
+            canHandleBack = canHandleBack,
         )
+        if (state.activeSheet == MangaReaderSheet.Catalog && state.bookUrl.isNotEmpty()) {
+            ReaderBookSheetRoute(
+                show = true,
+                bookUrl = state.bookUrl,
+                initialTab = ReaderBookSheetTab.Toc,
+                currentChapterIndex = state.pendingChapterIndex ?: state.chapterIndex,
+                onDismissRequest = { viewModel.onIntent(MangaReaderIntent.DismissSheet) },
+                onChapterClick = { chapterIndex, pageIndex ->
+                    viewModel.onIntent(MangaReaderIntent.DismissSheet)
+                    viewModel.onIntent(MangaReaderIntent.OpenChapter(chapterIndex, pageIndex))
+                },
+                onOpenFullBookInfo = {
+                    viewModel.onIntent(MangaReaderIntent.DismissSheet)
+                    onOpenBookInfo(state.bookName, state.bookAuthor, state.bookUrl)
+                },
+                onOpenFullToc = { page ->
+                    viewModel.onIntent(MangaReaderIntent.DismissSheet)
+                    onOpenToc(state.bookUrl, page)
+                },
+            )
+        }
     }
 }
