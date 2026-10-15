@@ -180,7 +180,7 @@ class ReadBookViewModel(
     private var readBookSyncJob: Job? = null
     private val _readAloudProgress = MutableStateFlow(
         activeReadAloudProgress(
-            isPlaying = BaseReadAloudService.isPlay(),
+            isPlaying = ReadBook.isCurrentBookReadAloud && BaseReadAloudService.isPlay(),
             currentProgress = BaseReadAloudService.currentProgress,
         )
     )
@@ -909,7 +909,7 @@ class ReadBookViewModel(
             }
 
             is ReadBookIntent.ToggleReadAloud -> {
-                if (!BaseReadAloudService.isRun) {
+                if (!ReadBook.isCurrentBookReadAloud) {
                     readAloudDelegate.openDefaultInterface()
                 }
                 _effects.tryEmit(ReadBookEffect.ToggleReadAloud)
@@ -1310,6 +1310,8 @@ class ReadBookViewModel(
                 buttonConfigDelegate.saveMenuButtons(intent.items)
             is ReadBookIntent.SaveTitleBarButtonConfig ->
                 buttonConfigDelegate.saveTitleBarButtons(intent.items)
+            is ReadBookIntent.SaveTitleBarActionConfig ->
+                buttonConfigDelegate.saveTitleBarActions(intent.items)
             is ReadBookIntent.SaveMoreActionsConfig ->
                 buttonConfigDelegate.saveMoreActions(intent.items)
 
@@ -1431,6 +1433,8 @@ class ReadBookViewModel(
             ReadBookIntent.OpenTtsEnginesAndVoices -> readAloudDelegate.openTtsEnginesAndVoices()
             ReadBookIntent.OpenTtsCache -> readAloudDelegate.openTtsCache()
             ReadBookIntent.OpenBookVoiceCasting -> readAloudDelegate.openBookVoiceCasting()
+            is ReadBookIntent.OpenReadAloudSubPage ->
+                readAloudDelegate.openReadAloudSubPage(intent.page)
             ReadBookIntent.OpenReadAloudPlayer -> readAloudDelegate.openPlayer()
             ReadBookIntent.OpenClassicReadAloudControls -> readAloudDelegate.openClassicControls()
 
@@ -1667,10 +1671,8 @@ class ReadBookViewModel(
         ReadBook.isUiActive = false
         // 进度在离开页面时落库；开书流程本身不落，口径见 ReadBookLoadDelegate.initData。
         ReadBook.saveRead()
-        if (!BaseReadAloudService.isPlay()) {
-            ReadBook.stopAutoSaveSession()
-            ReadBook.commitReadSession()
-        }
+        ReadBook.stopAutoSaveSession()
+        ReadBook.commitReadSession()
         ReadBook.cancelPreDownloadTask()
 
         if (!BuildConfig.DEBUG) {
@@ -1829,14 +1831,14 @@ class ReadBookViewModel(
         }
         viewModelScope.launch {
             var previousStatus: ReadAloudSessionStatus? = null
-            readAloudSessionStore.state.collect { session ->
+            readAloudDelegate.readerSessions.collect { (session, ownsReader) ->
                 val status = session.status
                 val info = session.playback
                 _uiState.update { state ->
                     state.copy(
-                        isReadAloudRunning = status != ReadAloudSessionStatus.Idle,
-                        isReadAloudPaused = status == ReadAloudSessionStatus.Paused,
-                        readAloudFollow = session.followReadAloudPosition,
+                        isReadAloudRunning = ownsReader && status != ReadAloudSessionStatus.Idle,
+                        isReadAloudPaused = ownsReader && status == ReadAloudSessionStatus.Paused,
+                        readAloudFollow = !ownsReader || session.followReadAloudPosition,
                         readAloudEngineName = info.engineName,
                         readAloudCharacterName = info.characterName,
                         readAloudRoleType = info.roleType,
@@ -1990,6 +1992,7 @@ class ReadBookViewModel(
         titleLineSpacingExtra = ReadBookConfig.titleLineSpacingExtra,
         titleLineSpacingSub = ReadBookConfig.titleLineSpacingSub,
         titleSize = ReadBookConfig.titleSize,
+        titleSizeRelative = ReadBookConfig.resolvedTitleSizeRelative,
         titleTopSpacing = ReadBookConfig.titleTopSpacing,
         titleBottomSpacing = ReadBookConfig.titleBottomSpacing,
         titleColor = ReadBookConfig.titleColor,
@@ -2143,6 +2146,7 @@ class ReadBookViewModel(
                 readMenuCustomIcons = ReadBookConfig.readMenuCustomIcons.toImmutableMap(),
                 titleBarButtons = current.menuConfig.titleBarButtons,
                 bottomBarButtons = current.menuConfig.bottomBarButtons,
+                titleBarActions = current.menuConfig.titleBarActions,
                 moreActionItems = buttonConfigDelegate
                     .parseMoreActions(readSettingsRepository.currentSettings.moreActionsConfig)
                     .toImmutableList(),
@@ -2249,7 +2253,7 @@ class ReadBookViewModel(
     }
 
     private fun stopReadAloudForClose() {
-        if (closeReadBookKeepReadAloud || !BaseReadAloudService.isRun) {
+        if (closeReadBookKeepReadAloud || !ReadBook.isCurrentBookReadAloud) {
             return
         }
         // 「退出阅读时继续后台朗读」：读的是持久设置，不依赖本次退出来源
@@ -2428,11 +2432,7 @@ class ReadBookViewModel(
         buildSet {
             sources.forEach { source ->
                 val refreshed = runCatching {
-                    val vFile = BookHelp.getImage(book, source)
-                    ImageProvider.bitmapLruCache.remove(vFile.absolutePath)
-                    vFile.delete()
-                    ImageProvider.cacheImage(book, source, ReadBook.bookSource)
-                    vFile.isFile && vFile.length() > 0L
+                    ImageProvider.refreshImage(book, source, ReadBook.bookSource)
                 }.getOrDefault(false)
                 if (refreshed) add(source)
             }
@@ -2698,7 +2698,7 @@ class ReadBookViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        if (BaseReadAloudService.isRun && BaseReadAloudService.pause) {
+        if (ReadBook.isCurrentBookReadAloud && BaseReadAloudService.pause) {
             ReadAloud.stop(context)
         }
         readerSession.detach()

@@ -30,7 +30,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -184,6 +186,7 @@ private const val SelectionHandleFadeInMillis = 140
 @Composable
 fun ReaderCanvasSurface(
     hostPages: ReaderPageWindow,
+    redrawRevision: Long,
     transitionMode: ReaderTransitionMode,
     /** 翻页动画速度挡位；只改折算基准时长，不改变动画种类与几何。 */
     pageTurnSpeed: ReaderPageTurnSpeed,
@@ -249,6 +252,7 @@ fun ReaderCanvasSurface(
     fun currentPageWindow(): ReaderPageWindow =
         ReaderPageNavigator.resolveWindow(latestHostPages, pendingPageBase, pendingPageWindow)
     val current = pages.current ?: return
+    val redrawSignal = rememberUpdatedState(redrawRevision)
     val pageBackgroundImage = remember(backgroundImage, backgroundRevision) {
         backgroundImage?.isolatedCopy()
     }
@@ -261,12 +265,15 @@ fun ReaderCanvasSurface(
     // 在组合期读它会让整个画布每帧重组。`turnDirection` 只在一次换页开始/结束（或模式切换）
     // 时改变；位移、透明度、折页几何一律在绘制期/layer 期读取。
     var turnDirection by remember { mutableStateOf<ReaderTurnDirection?>(null) }
+    var committedTurnPageId by remember { mutableStateOf<ReaderPageId?>(null) }
+    val composedTurnDirection = turnDirection.takeUnless { current.id == committedTurnPageId }
 
     /**
      * [transition] 的唯一写入口，顺带维护低频的 [turnDirection]。
      * 不要把 `transition` 读到组合期，否则拖拽的每一帧都会重组整个画布。
      */
     fun applyTransition(next: ReaderPageTransition) {
+        if (next.direction != null && next.dragging) committedTurnPageId = null
         transition = next
         turnDirection = next.direction?.takeIf { next.dragging }
     }
@@ -345,11 +352,11 @@ fun ReaderCanvasSurface(
     var curlCornerY by remember { mutableFloatStateOf(0f) }
     // 快照层与位图池都在会话级持有、跨回合复用，对照旧 View `CanvasRecorderFactory` 的对象池与
     // `curBitmap/prevBitmap/nextBitmap`：每个回合新建 `rememberGraphicsLayer()` 会丢掉这份复用。
-    val pageSnapshots = remember { PageSnapshotBitmapPool() }
+    val pageSnapshots = remember(redrawRevision) { PageSnapshotBitmapPool() }
     val baseSnapshotLayer = rememberGraphicsLayer()
     val revealSnapshotLayer = rememberGraphicsLayer()
     val autoPageSnapshotLayer = rememberGraphicsLayer()
-    DisposableEffect(Unit) {
+    DisposableEffect(pageSnapshots) {
         onDispose { pageSnapshots.clear() }
     }
     // 滚动偏移只在 graphicsLayer 块（layer 属性期）读取：拖拽/fling 帧只更新层变换、
@@ -496,6 +503,14 @@ fun ReaderCanvasSurface(
         }
         return window
     }
+    fun finishPageTurn() {
+        val originId = currentPageWindow().current?.id
+        committedTurnPageId = completePendingTurn()?.current?.id?.takeIf { it != originId }
+        if (committedTurnPageId == null) {
+            displayOffset = 0f
+            applyTransition(ReaderPageTransition())
+        }
+    }
     fun settlePageTurn(decision: ReaderTransitionDecision) {
         pageMotionJob?.cancel()
         curlRevealJob?.cancel()
@@ -538,9 +553,7 @@ fun ReaderCanvasSurface(
         }
         if (durationMillis == 0) {
             displayOffset = decision.targetOffsetPx
-            completePendingTurn()
-            displayOffset = 0f
-            applyTransition(ReaderPageTransition())
+            finishPageTurn()
             return
         }
         val startOffset = displayOffset
@@ -570,13 +583,13 @@ fun ReaderCanvasSurface(
                     curlTouchY = startCurlY + (targetCurlY - startCurlY) * fraction
                 }
             }
-            completePendingTurn()
-            displayOffset = 0f
-            applyTransition(ReaderPageTransition())
+            // Like View's onAnimStop -> fillPage: keep the fully revealed destination until
+            // composition installs its window. Resetting here exposes the outgoing page again.
+            finishPageTurn()
         }
     }
     fun tapPageTurn(direction: ReaderTurnDirection) {
-        val window = latestPages
+        val window = currentPageWindow()
         // 放行以"书中是否还有邻章"为准（对照旧 View TextPageFactory.hasNext/hasPrev）：
         // 邻章排版滞后于阅读进度时窗口里还没有邻页，但仍必须把翻页交给宿主，
         // 由宿主预置加载占位页或启动该章排版；否则停在末页只弹"没有下一页"。
@@ -795,6 +808,11 @@ fun ReaderCanvasSurface(
         }
     }
     LaunchedEffect(current.id, current.layoutRevision, transitionMode) {
+        if (committedTurnPageId != null) {
+            displayOffset = 0f
+            applyTransition(ReaderPageTransition())
+            committedTurnPageId = null
+        }
         val ownCrossing = scrollOwnCrossing
         scrollOwnCrossing = false
         if (transitionMode != ReaderTransitionMode.SCROLL || !ownCrossing) {
@@ -957,9 +975,6 @@ fun ReaderCanvasSurface(
             val selectionDragSlop = ReaderGestureSettingsPolicy.selectionDragSlopPx(
                 viewConfiguration.touchSlop,
             )
-            // 判定「主动反向取消翻页」的位移下限：pageTouchSlop 是可配到 1000px 的防误触设置，
-            // 拿它当反向阈值会让反向永远不生效，所以只用平台的触控阈值。
-            val horizontalReversalSlopPx = viewConfiguration.touchSlop
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 latestReaderInteraction()
@@ -969,6 +984,7 @@ fun ReaderCanvasSurface(
                 // 翻页收尾被打断时在此同步提交；宿主当帧返回新窗口，但组合要等下一帧，
                 // 手势必须改用返回的窗口命中，否则长按会选中已不在屏幕上的旧页。
                 val turnedWindow = completePendingTurn()
+                committedTurnPageId = null
                 displayOffset = 0f
                 applyTransition(ReaderPageTransition())
                 bookmarkReturnJob?.cancel()
@@ -1102,15 +1118,10 @@ fun ReaderCanvasSurface(
                         if (!change.pressed) {
                             released = true; break
                         }
-                        // 每次 MOVE 只读一次位移：`positionChange()` 会把「上次读取点」往前推一步，
-                        // 同一帧里连调第二次拿到的是 0——位移一旦被先算掉，后面的反向记录与滚动
-                        // 分支再取就都是 0。
                         val moveDelta = change.positionChange()
                         total += moveDelta
-                        // 反向位移要达到平台 touchSlop 才算「主动往回收」：抬手那一帧手指减速时的
-                        // 一两像素回弹不是反向。用原始事件位移判定的话，已经拖过大半页也会被
-                        // 误判成反向取消。
-                        if (abs(moveDelta.x) >= horizontalReversalSlopPx) {
+                        // Match HorizontalPageDelegate's final non-zero movement direction.
+                        if (moveDelta.x != 0f) {
                             lastHorizontalDelta = moveDelta.x
                         }
                         curlTouchY = change.position.y
@@ -1502,12 +1513,13 @@ fun ReaderCanvasSurface(
             )
         }
         if (transitionMode == ReaderTransitionMode.SCROLL) {
-            val contentClip = remember(current) {
-                current.contentClipRect(current.textBackgroundRuns())
-            }
             Box(Modifier
                 .fillMaxSize()
                 .drawWithContent {
+                    // 跨页当帧 ScrollPageStack 已读取 pending 窗口；裁剪必须读同一个窗口，
+                    // 否则相邻页气泡滑入时仍按上一窗的外沿截断。
+                    val contentClip = currentPageWindow().contentClipRect()
+                        ?: return@drawWithContent
                     // 外扩阴影/斜体溢出，对照旧 View 的 ChapterProvider.visibleRect；
                     // 但九宫格气泡与放大过的背景图本来就要画到内容框之外，裁剪必须跟着它们走，
                     // 否则气泡会在滚动模式的视口边沿被切掉。
@@ -1521,6 +1533,7 @@ fun ReaderCanvasSurface(
                     }
                 }) {
                 ScrollPageStack(
+                    redrawSignal = redrawSignal,
                     windowProvider = { currentPageWindow() },
                     offsetYState = scrollOffsetState,
                     selection = selectionColor,
@@ -1531,10 +1544,11 @@ fun ReaderCanvasSurface(
                     loadImage = loadImage,
                 )
             }
-        } else if (transitionMode == ReaderTransitionMode.SIMULATION && turnDirection != null) {
+        } else if (transitionMode == ReaderTransitionMode.SIMULATION && composedTurnDirection != null) {
             SimulationPageStack(
+                redrawSignal = redrawSignal,
                 pages = pages,
-                direction = turnDirection!!,
+                direction = composedTurnDirection,
                 pageExtentPx = current.widthPx.toFloat(),
                 pageOffsetPx = { displayOffset },
                 touchX = { curlTouchX },
@@ -1561,20 +1575,42 @@ fun ReaderCanvasSurface(
             // 等价于旧 View 的 Cover/Slide/Fade delegate：手势开始 `setBitmap()` 截一次，
             // 之后每帧只 `withTranslation` / `withClip` / `setAlpha` 画 recorder。
             val turnPreview = ReaderPageTransition(
-                direction = turnDirection,
+                direction = composedTurnDirection,
                 offsetPx = 0f,
                 pageExtentPx = 1f,
-                dragging = turnDirection != null,
+                dragging = composedTurnDirection != null,
             ).transforms(transitionMode)
             @Composable
             fun PageLayer(page: ReaderPage, role: PagedLayerRole, offsetY: () -> Float) {
+                val coverClipModifier = if (
+                    transitionMode == ReaderTransitionMode.COVER &&
+                    role == PagedLayerRole.NEXT &&
+                    composedTurnDirection == ReaderTurnDirection.NEXT
+                ) {
+                    Modifier.drawWithContent {
+                        val revealLeft = (size.width + displayOffset).coerceIn(0f, size.width)
+                        clipRect(
+                            left = revealLeft,
+                            top = 0f,
+                            right = size.width,
+                            bottom = size.height
+                        ) {
+                            this@drawWithContent.drawContent()
+                        }
+                    }
+                } else Modifier
+
                 ReaderPageCanvas(
                     page, backgroundColor, pageBackgroundImage, backgroundImageAlpha, selectionColor, textAccentColor,
                     Modifier
                         .fillMaxSize()
+                        .then(coverClipModifier)
                         .graphicsLayer {
-                            val transform = transition
-                                .copy(offsetPx = displayOffset)
+                            val transform = ReaderPageTransitionPolicy.forComposedWindow(
+                                transition.copy(offsetPx = displayOffset),
+                                current.id,
+                                committedTurnPageId,
+                            )
                                 .transforms(transitionMode)
                                 .forRole(role)
                             if (transform == null) {
@@ -1591,6 +1627,7 @@ fun ReaderCanvasSurface(
                     selectionPreviewStyle,
                     cachedImage,
                     loadImage,
+                    redrawSignal = redrawSignal,
                 )
             }
             // 只借 `transforms()` 判断"本回合哪些页参与绘制"与绘制顺序；位移/透明度不用它的值，
@@ -1598,18 +1635,32 @@ fun ReaderCanvasSurface(
             val currentOnTop = turnPreview.currentOnTop
             val drawsNext = turnPreview.next != null
             val drawsPrevious = turnPreview.previous != null
-            if (currentOnTop && drawsNext) {
-                pages.next?.let { page -> PageLayer(page, PagedLayerRole.NEXT) { 0f } }
+            val orderedPages = buildList {
+                if (currentOnTop && drawsNext) {
+                    pages.next?.let { add(it to PagedLayerRole.NEXT) }
+                }
+                add(current to PagedLayerRole.CURRENT)
+                if (drawsPrevious) {
+                    pages.previous?.let { add(it to PagedLayerRole.PREVIOUS) }
+                }
+                if (!currentOnTop && drawsNext) {
+                    pages.next?.let { add(it to PagedLayerRole.NEXT) }
+                }
             }
-            PageLayer(current, PagedLayerRole.CURRENT) { bookmarkOffset }
-            if (drawsPrevious) {
-                pages.previous?.let { page -> PageLayer(page, PagedLayerRole.PREVIOUS) { 0f } }
-            }
-            if (!currentOnTop && drawsNext) {
-                pages.next?.let { page -> PageLayer(page, PagedLayerRole.NEXT) { 0f } }
+            // 翻页开始/结束会改变绘制顺序。同一页必须带着自己的 RenderNode 换位；
+            // 按槽位复用会先画出上一次留在该槽位的页，再重录新页，形成旧页闪帧。
+            // 全局消息窗的多个槽位共享同一个页 ID，仅这种情况才按角色区分。
+            val repeatedPageIds = orderedPages.groupingBy { it.first.id }
+                .eachCount().filterValues { it > 1 }.keys
+            orderedPages.forEach { (page, role) ->
+                key(page.id, role.takeIf { page.id in repeatedPageIds }) {
+                    PageLayer(page, role) {
+                        if (role == PagedLayerRole.CURRENT) bookmarkOffset else 0f
+                    }
+                }
             }
         }
-        if (transitionMode == ReaderTransitionMode.COVER && turnDirection != null) {
+        if (transitionMode == ReaderTransitionMode.COVER && composedTurnDirection != null) {
             Canvas(Modifier.fillMaxSize()) {
                 val direction = transition.direction ?: return@Canvas
                 val offsetPx = displayOffset
@@ -1634,7 +1685,7 @@ fun ReaderCanvasSurface(
             // `withClip` + `draw` + 1px 指示线。这里把下一页录进快照层，`autoRevealPx`
             // 只在绘制期读，因此整段自动阅读期间零重组、零重录（页码变化时才重录一次）。
             pages.next?.let { page ->
-                PageSnapshotLayer(autoPageSnapshotLayer) {
+                PageSnapshotLayer(autoPageSnapshotLayer, redrawSignal) {
                     ReaderPageCanvas(
                         page,
                         backgroundColor,
@@ -1646,7 +1697,8 @@ fun ReaderCanvasSurface(
                         textSelection,
                         selectionPreviewStyle,
                         cachedImage,
-                        loadImage
+                        loadImage,
+                        redrawSignal = redrawSignal,
                     )
                 }
                 Canvas(Modifier.fillMaxSize()) {
@@ -1848,6 +1900,7 @@ private fun ReaderPage.scrollViewportExtentPx(): Float =
 
 @Composable
 private fun ScrollPageStack(
+    redrawSignal: State<Long>,
     windowProvider: () -> ReaderPageWindow,
     offsetYState: androidx.compose.runtime.MutableFloatState,
     selection: Color,
@@ -1901,6 +1954,7 @@ private fun ScrollPageStack(
             .fillMaxSize()
             .graphicsLayer { translationY = offsetYState.floatValue },
     ) {
+        redrawSignal.value
         // draw 期快照读：页窗口（同步换窗的 pending）变化只重绘不重组；拖拽平移只更新
         // graphicsLayer 变换，draw 块不执行。相邻页的 y 是栈坐标，整画布随层平移偏移。
         val window = windowProvider()
@@ -1991,7 +2045,10 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScrollPageConte
             paint.color = if (previewing && activeSelection.contains(e, page.id.chapterIndex)) {
                 selectionPreviewStyle.textColor ?: page.previewBaseTextColor(e)
             } else page.resolvedColorArgb(e, readAloud.toArgb())
-            paint.isUnderlineText = e.style.nativeUnderline || e.drawsLinkUnderline
+            // 与分页绘制和旧 TextHtmlColumn 一致：规则自定义线替代 HTML 原生线，
+            // 链接下划线仍由原生 Paint 绘制。
+            paint.isUnderlineText = (e.style.nativeUnderline && e.style.underline == null) ||
+                    e.drawsLinkUnderline
             native.drawText(e.value, e.bounds.left, e.baselinePx, paint)
         }
 
@@ -2061,6 +2118,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScrollPageConte
  */
 @Composable
 private fun SimulationPageStack(
+    redrawSignal: State<Long>,
     pages: ReaderPageWindow,
     direction: ReaderTurnDirection,
     pageExtentPx: Float,
@@ -2082,6 +2140,7 @@ private fun SimulationPageStack(
     cachedImage: (ReaderElement.Image) -> Bitmap?,
     loadImage: suspend (ReaderElement.Image) -> Bitmap?,
 ) {
+    val redrawRevision = redrawSignal.value
     val basePage = if (direction == ReaderTurnDirection.NEXT) pages.current else pages.previous
     val revealPage = if (direction == ReaderTurnDirection.NEXT) pages.next else pages.current
     if (basePage == null || revealPage == null) return
@@ -2112,11 +2171,20 @@ private fun SimulationPageStack(
         }
         // 命中池子就用位图，连快照层都不用挂（该回合零页面重录）；未命中先走图层路径，
         // 随后补拍 —— 一帧拍一页，把旧 View `setBitmap()` 那种"手势开始连拍两页"的卡顿摊开。
-        var baseBitmap by remember(baseKey) { mutableStateOf(snapshots.get(baseKey)) }
-        var revealBitmap by remember(revealKey) { mutableStateOf(snapshots.get(revealKey)) }
+        var baseBitmap by remember(
+            baseKey,
+            redrawRevision
+        ) { mutableStateOf(snapshots.get(baseKey)) }
+        var revealBitmap by remember(revealKey, redrawRevision) {
+            mutableStateOf(
+                snapshots.get(
+                    revealKey
+                )
+            )
+        }
         val baseSettled = basePage.isSnapshotSettled(cachedImage)
         val revealSettled = revealPage.isSnapshotSettled(cachedImage)
-        LaunchedEffect(baseKey, revealKey, baseSettled, revealSettled) {
+        LaunchedEffect(baseKey, revealKey, baseSettled, revealSettled, redrawRevision) {
             withFrameNanos { }
             if (baseBitmap == null) {
                 snapshots.capture(baseLayer, baseKey, baseSettled)?.let { baseBitmap = it }
@@ -2127,7 +2195,7 @@ private fun SimulationPageStack(
             }
         }
         if (baseBitmap == null) {
-            PageSnapshotLayer(baseLayer) {
+            PageSnapshotLayer(baseLayer, redrawSignal) {
                 ReaderPageCanvas(
                     basePage,
                     background,
@@ -2139,12 +2207,13 @@ private fun SimulationPageStack(
                     activeSelection,
                     selectionPreviewStyle,
                     cachedImage,
-                    loadImage
+                    loadImage,
+                    redrawSignal = redrawSignal,
                 )
             }
         }
         if (revealBitmap == null) {
-            PageSnapshotLayer(revealLayer) {
+            PageSnapshotLayer(revealLayer, redrawSignal) {
                 ReaderPageCanvas(
                     revealPage,
                     background,
@@ -2156,7 +2225,8 @@ private fun SimulationPageStack(
                     activeSelection,
                     selectionPreviewStyle,
                     cachedImage,
-                    loadImage
+                    loadImage,
+                    redrawSignal = redrawSignal,
                 )
             }
         }
@@ -2358,6 +2428,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPageSnapshot(
 @Composable
 private fun PageSnapshotLayer(
     layer: GraphicsLayer,
+    redrawSignal: State<Long>,
     content: @Composable () -> Unit,
 ) {
     Box(
@@ -2368,6 +2439,7 @@ private fun PageSnapshotLayer(
             // 才执行下面的绘制块。删掉它，`record` 会退化成每帧重录整页。
             .graphicsLayer { }
             .drawWithContent {
+                redrawSignal.value
                 layer.record { this@drawWithContent.drawContent() }
             }
     ) {
@@ -2568,6 +2640,7 @@ private fun ReaderPageCanvas(
     loadImage: suspend (ReaderElement.Image) -> Bitmap?,
     drawBackground: Boolean = true,
     drawDecoration: Boolean = true,
+    redrawSignal: State<Long>,
 ) {
     val isolatedBackgroundImage = remember(backgroundImage) { backgroundImage?.isolatedCopy() }
     // 角色胶囊只跟主题（深浅模式切换），绝不跟正文/高亮样式取色
@@ -2672,6 +2745,8 @@ private fun ReaderPageCanvas(
         }
     }
     Canvas(if (drawBackground) modifier.background(background) else modifier) {
+        // Read inside the page's RenderNode, so a resume invalidates the cached body itself.
+        redrawSignal.value
         val native = drawContext.canvas.nativeCanvas
         isolatedBackgroundImage?.takeIf { drawBackground }?.let { drawable ->
             drawable.bounds = android.graphics.Rect(0, 0, size.width.roundToInt(), size.height.roundToInt())

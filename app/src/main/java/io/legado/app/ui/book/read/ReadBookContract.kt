@@ -115,7 +115,7 @@ data class ReadBookStyleConfig(
 
 @Stable
 data class ReadSheetConfigUiState(
-    /** 标题字号 <8 时按「正文字号 + 偏移」解释，故正文字号也要进弹层快照。 */
+    /** 正文字号（sp）。正文排版与高亮预览用它。 */
     val textSize: Int = 20,
     val letterSpacing: Float = 0f,
     val lineSpacing: Int = 0,
@@ -135,6 +135,7 @@ data class ReadSheetConfigUiState(
     val titleLineSpacingExtra: Int = 0,
     val titleLineSpacingSub: Int = 0,
     val titleSize: Int = 0,
+    val titleSizeRelative: Boolean = true,
     val titleTopSpacing: Int = 0,
     val titleBottomSpacing: Int = 0,
     val titleColor: Int = 0,
@@ -324,10 +325,10 @@ data class ReadBookUiState(
     val defaultReadAloudInterface: String = ReadAloudSettingsRepository.DEFAULT_INTERFACE_CLASSIC,
     val readAloudParagraphInterval: Int = 0,
     /**
-     * 朗读设置卡片当前停在哪个 tab（0 常规 / 1 引擎与音色）。
+     * 朗读设置卡片当前停在哪个 tab（0 常规 / 1 引擎与音色 / 2 角色与配乐）。
      *
-     * 存在这里而不是卡片里：卡片是窗口级浮层，压进整屏页（引擎与音色那三行）时它会被拆掉，
-     * `rememberPagerState` 的初值回到 0，回来就落在常规 tab。
+     * 存在这里而不是卡片里：卡片是窗口级浮层，压进整屏页（引擎与音色 / 角色与配乐里
+     * 那几个跳转项）时它会被拆掉，`rememberPagerState` 的初值回到 0，回来就落在常规 tab。
      */
     val readAloudConfigTab: Int = 0,
     // Style config (reactive state for ReadBookConfig)
@@ -426,6 +427,11 @@ data class ReadMenuConfig(
     val readMenuCustomIcons: ImmutableMap<String, String> = persistentMapOf(),
     val titleBarButtons: ImmutableList<ReadBookButtonConfigItem> = persistentListOf(),
     val bottomBarButtons: ImmutableList<ReadBookButtonConfigItem> = persistentListOf(),
+    /**
+     * 顶栏按钮配置。可选 id 见 [ReadBookTopBarActionIds]。
+     * 与 [titleBarButtons]（浮动图标行，同属一个图标池）分开存。
+     */
+    val titleBarActions: ImmutableList<ReadBookButtonConfigItem> = persistentListOf(),
     val moreActionItems: ImmutableList<ReadBookButtonConfigItem> = persistentListOf(),
     val showBrightnessView: String = "0",
     val brightnessVwPos: String = "1",
@@ -441,6 +447,7 @@ data class ReadBookButtonConfigItem(
     val enabled: Boolean,
 )
 
+/** 共享图标池：顶栏、浮动图标、底栏共用的那批通用按钮。完整池见 `ReadMenuActionIds`。 */
 internal val ReadBookButtonIds = listOf(
     "ai_summary",
     "ai_rewrite",
@@ -482,6 +489,23 @@ data class ReadBookInitRequest(
     val chapterIndex: Int = -1,
     val chapterPos: Int = -1,
 )
+
+/**
+ * 朗读设置卡片里可跳转的整屏子页。
+ *
+ * 这些都是全局设置、不需要书籍上下文，所以共用一条跳转通道（[ReadBookIntent.OpenReadAloudSubPage]）：
+ * 阅读界面走 `ReadBookEffect`，听书播放页走 `ReadAloudPlayerConfigHostAction`，两边映射到同一批路由。
+ */
+enum class ReadAloudSubPage {
+    /** 角色声音池。 */
+    VoicePool,
+
+    /** 背景音乐池。 */
+    BgmPool,
+
+    /** 朗读胶囊外观。 */
+    CapsuleStyle,
+}
 
 sealed interface ReadBookIntent {
     // Initialization
@@ -722,6 +746,9 @@ sealed interface ReadBookIntent {
     data class OpenTitleBarCustomIconPicker(val id: String) : ReadBookIntent
     data class SaveMenuButtonConfig(val items: List<ReadBookButtonConfigItem>) : ReadBookIntent
     data class SaveTitleBarButtonConfig(val items: List<ReadBookButtonConfigItem>) : ReadBookIntent
+
+    /** 保存顶栏按钮顺序与开关。 */
+    data class SaveTitleBarActionConfig(val items: List<ReadBookButtonConfigItem>) : ReadBookIntent
     data class SaveMoreActionsConfig(val items: List<ReadBookButtonConfigItem>) : ReadBookIntent
 
     // BgTextConfig (needs Activity for DialogFragment)
@@ -990,6 +1017,9 @@ sealed interface ReadBookIntent {
     data object OpenTtsEnginesAndVoices : ReadBookIntent
     data object OpenTtsCache : ReadBookIntent
     data object OpenBookVoiceCasting : ReadBookIntent
+
+    /** 朗读设置里跳到某个整屏子页（角色声音池 / 背景音乐池 / 朗读胶囊外观）。 */
+    data class OpenReadAloudSubPage(val page: ReadAloudSubPage) : ReadBookIntent
     /** 朗读设置卡片停在哪个 tab（滑页和点 tab 都走这里）。 */
     data class SetReadAloudConfigTab(val tab: Int) : ReadBookIntent
     data object OpenReadAloudPlayer : ReadBookIntent
@@ -1131,6 +1161,7 @@ sealed interface ReadBookEffect {
     data object OpenTtsEnginesAndVoices : ReadBookEffect
     data object OpenTtsCache : ReadBookEffect
     data class OpenBookVoiceCasting(val bookUrl: String) : ReadBookEffect
+    data class OpenReadAloudSubPage(val page: ReadAloudSubPage) : ReadBookEffect
     data object OpenHighlightRuleImportPicker : ReadBookEffect
     data object OpenHighlightRuleExportPicker : ReadBookEffect
 
@@ -1168,6 +1199,9 @@ sealed interface ReadBookSheet {
     data object ToolButtonConfig : ReadBookSheet
     data object EyeProtection : ReadBookSheet
     data object FloatingBarIconConfig : ReadBookSheet
+
+    /** 顶栏按钮配置（共用浮动图标/底栏的图标池）。 */
+    data object TitleBarActionConfig : ReadBookSheet
     data object EffectiveReplaces : ReadBookSheet
     data object ContentProcesses : ReadBookSheet
     data object TextProcessing : ReadBookSheet
@@ -1360,6 +1394,11 @@ sealed interface ConfigUpdate {
     }
     data class TitleSize(val value: Int) : ConfigUpdate {
         override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)
+    }
+
+    data class TitleSizeRelative(val value: Boolean) : ConfigUpdate {
+        override val actions =
+            setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)
     }
     data class TitleTopSpacing(val value: Int) : ConfigUpdate {
         override val actions = setOf(ConfigUpdateAction.UpdateChapterStyle, ConfigUpdateAction.ReloadContent)

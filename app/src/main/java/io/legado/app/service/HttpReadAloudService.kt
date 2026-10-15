@@ -13,8 +13,8 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.Timeline
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.cache.CacheDataSink
@@ -38,12 +38,10 @@ import io.legado.app.constant.AppPattern
 import io.legado.app.constant.IntentAction
 import io.legado.app.constant.NotificationId
 import io.legado.app.data.appDb
-import io.legado.app.data.entities.VoiceEffectPreset
-import io.legado.app.help.readaloud.effect.VoiceEffectAudio
-import io.legado.app.help.readaloud.effect.VoiceEffectStore
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.HttpTTS
+import io.legado.app.data.entities.VoiceEffectPreset
 import io.legado.app.domain.gateway.CloudTtsEngineGateway
 import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.gateway.ReadAloudSettingsGateway
@@ -65,10 +63,12 @@ import io.legado.app.feature.reader.core.source.ReaderChapterSourceParser
 import io.legado.app.feature.reader.platform.AndroidReaderHtmlSemanticTextResolver
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
-import io.legado.app.help.readaloud.cast.CastAssignmentStore
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.help.exoplayer.InputStreamDataSource
 import io.legado.app.help.http.okHttpClient
+import io.legado.app.help.readaloud.cast.CastAssignmentStore
+import io.legado.app.help.readaloud.effect.VoiceEffectAudio
+import io.legado.app.help.readaloud.effect.VoiceEffectStore
 import io.legado.app.help.readaloud.playback.CharacterPerformanceInstructionBuilder
 import io.legado.app.help.readaloud.playback.CloudTtsAudioSynthesizer
 import io.legado.app.help.readaloud.playback.CloudTtsEmotionMapper
@@ -99,7 +99,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.withLock
 import okhttp3.Response
 import org.koin.core.context.GlobalContext
@@ -111,6 +110,7 @@ import java.io.File
 import java.io.InputStream
 import java.net.ConnectException
 import java.net.SocketTimeoutException
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 在线朗读
@@ -146,6 +146,17 @@ class HttpReadAloudService : BaseReadAloudService(),
      */
     private fun synthesisSpeed(httpTts: HttpTTS?): Float =
         ((httpTts?.speed ?: DEFAULT_TTS_SPEED) + 5) / 10f
+
+    /**
+     * 预合成并发：全局设置与源自带上限取小。
+     *
+     * 多角色混播时一句一个源，这里按默认引擎取值是近似值；源自带上限是该源自己
+     * 声明能扛的并发，取小不会把它压过头。
+     */
+    private fun synthesisConcurrency(httpTts: HttpTTS): Int = minOf(
+        readAloudSettings.ttsPreSynthesisConcurrency,
+        httpTts.synthesisThreadCount,
+    ).coerceIn(1, HttpTTS.MAX_SYNTHESIS_THREAD_COUNT)
 
     private data class PreDownloadChapter(
         val chapterTitle: String,
@@ -406,7 +417,7 @@ class HttpReadAloudService : BaseReadAloudService(),
         if (!requestFocus()) return
         if (contentList.isEmpty()) {
             AppLog.putDebug("朗读列表为空")
-            ReadBook.readAloud()
+            preparePlayback()
         } else {
             super.play()
             if (readAloudSettings.streamReadAloudAudio && !hasFileSynthesisCue()) {
@@ -518,7 +529,7 @@ class HttpReadAloudService : BaseReadAloudService(),
         chapterDone: Int,
     ) = coroutineScope {
         val bookUrl = book.bookUrl
-        val concurrency = readAloudSettings.ttsPreSynthesisConcurrency.coerceIn(1, 8)
+        val concurrency = synthesisConcurrency(httpTts)
         val semaphore = kotlinx.coroutines.sync.Semaphore(concurrency)
         audioDownloadSentences.set(0)
         ReadAloudAudioStore.updateProgress(
@@ -810,7 +821,9 @@ class HttpReadAloudService : BaseReadAloudService(),
                                 }
 
                                 else -> {
-                                    val inputStream = getSpeakStream(itemHttpTts, speakText)
+                                    val inputStream = getSpeakStream(
+                                        itemHttpTts, speakText, routedVoice, cueEmotion
+                                    )
                                     if (inputStream != null) {
                                         createSpeakFile(fileName, inputStream)
                                     } else {
@@ -916,7 +929,9 @@ class HttpReadAloudService : BaseReadAloudService(),
             chapterIndex = chapter.index,
             title = displayTitle,
             semanticContent = source.semanticContent,
-            pageStarts = ReadBook.readerPagination(chapter.index)?.pageStarts.orEmpty(),
+            pageStarts = bookSession.pagination?.takeIf {
+                bookSession.owns(book.bookUrl) && it.chapterIndex == chapter.index
+            }?.pageStarts.orEmpty(),
             contentSplitMode = contentSplitMode,
         )
         val splitPolicy = contentSplitPolicy(contentSplitMode)
@@ -932,18 +947,19 @@ class HttpReadAloudService : BaseReadAloudService(),
         val contentList = if (!queue.isEmpty) {
             queue.cues.map { it.text }
         } else {
+            // 与实时朗读同一份单元集合：不发声段不进列表，预合成文件名才会与播放时对上
             listOf(displayTitle.trim()).filter { it.isNotEmpty() } +
-                    readAloudChapter.paragraphs(splitByPage, splitPolicy)
+                    readAloudChapter.readAloudParagraphs(splitByPage, splitPolicy)
                         .map { it.text }
         }
         return PreDownloadChapter(displayTitle, queue, contentList)
     }
 
     private suspend fun preDownloadAudios(httpTts: HttpTTS) {
-        val book = ReadBook.book ?: return
-        val currentIdx = ReadBook.durChapterIndex
+        val book = bookSession.book ?: return
+        val currentIdx = bookSession.chapterIndex
         val limit = readAloudSettings.audioPreDownloadNum
-        val concurrency = readAloudSettings.ttsPreSynthesisConcurrency.coerceIn(1, 8)
+        val concurrency = synthesisConcurrency(httpTts)
         var consecutiveFailures = 0
 
         try {
@@ -1063,7 +1079,9 @@ class HttpReadAloudService : BaseReadAloudService(),
                 ReadAloudVoice.ENGINE_HTTP -> {
                     val itemHttpTts = routedVoice.engineId.toLongOrNull()
                         ?.let(appDb.httpTTSDao::get) ?: httpTts
-                    val inputStream = getSpeakStream(itemHttpTts, speakText)
+                    val inputStream = getSpeakStream(
+                        itemHttpTts, speakText, routedVoice, cue?.emotion.orEmpty()
+                    )
                     if (inputStream != null) {
                         createSpeakFile(fileName, inputStream)
                         true
@@ -1163,9 +1181,17 @@ class HttpReadAloudService : BaseReadAloudService(),
                     if (speakText.isEmpty()) {
                         AppLog.put("阅读段落内容为空，使用无声音频代替。\n朗读文本：$speakText")
                     }
-                    val itemHttpTts = httpTtsForCue(index, httpTts)
-                    val fileName = md5SpeakFileName(text, httpTts = itemHttpTts)
-                    val dataSourceFactory = createDataSourceFactory(itemHttpTts, speakText)
+                    val itemVoice = httpVoiceForCue(index, httpTts)
+                    val itemHttpTts = itemVoice.engineId.toLongOrNull()
+                        ?.let(appDb.httpTTSDao::get) ?: httpTts
+                    val itemEmotion = playbackQueue.cues.getOrNull(index)?.emotion.orEmpty()
+                    val fileName = md5SpeakFileName(
+                        text,
+                        httpTts = itemHttpTts,
+                        sourceKey = httpSourceKey(itemVoice, itemEmotion, httpTts),
+                    )
+                    val dataSourceFactory =
+                        createDataSourceFactory(itemHttpTts, speakText, itemVoice, itemEmotion)
                     val downloader = createDownloader(dataSourceFactory, fileName)
                     downloaderChannel.send(downloader)
                     val mediaSource = createMediaSource(dataSourceFactory, fileName)
@@ -1214,10 +1240,10 @@ class HttpReadAloudService : BaseReadAloudService(),
         httpTts: HttpTTS,
         downloaderChannel: Channel<Downloader>
     ) {
-        val book = ReadBook.book ?: return
-        val currentIdx = ReadBook.durChapterIndex
+        val book = bookSession.book ?: return
+        val currentIdx = bookSession.chapterIndex
         val limit = readAloudSettings.audioPreDownloadNum
-        val concurrency = readAloudSettings.ttsPreSynthesisConcurrency.coerceIn(1, 8)
+        val concurrency = synthesisConcurrency(httpTts)
         var consecutiveFailures = 0
 
         try {
@@ -1282,7 +1308,13 @@ class HttpReadAloudService : BaseReadAloudService(),
                         val fileName = md5SpeakFileName(
                             content, prepared.chapterTitle, sourceKey = sourceKey,
                         )
-                        val dataSourceFactory = createDataSourceFactory(httpTts, speakText)
+                        // 路由出来的引擎才是这句该用的源，直接用 httpTts 会拿默认源
+                        // 去配这条路由的音色 id
+                        val itemHttpTts = routedVoice.engineId.toLongOrNull()
+                            ?.let(appDb.httpTTSDao::get) ?: httpTts
+                        val dataSourceFactory = createDataSourceFactory(
+                            itemHttpTts, speakText, routedVoice, cue?.emotion.orEmpty()
+                        )
                         val downloader = createDownloader(dataSourceFactory, fileName)
                         downloaderChannel.send(downloader)
                     }
@@ -1297,7 +1329,9 @@ class HttpReadAloudService : BaseReadAloudService(),
 
     private fun createDataSourceFactory(
         httpTts: HttpTTS,
-        speakText: String
+        speakText: String,
+        voice: ReadAloudVoice? = null,
+        emotionTag: String = ""
     ): CacheDataSource.Factory {
         val upstreamFactory = DataSource.Factory {
             InputStreamDataSource {
@@ -1306,7 +1340,7 @@ class HttpReadAloudService : BaseReadAloudService(),
                 } else {
                     kotlin.runCatching {
                         runBlocking(lifecycleScope.coroutineContext[Job]!!) {
-                            getSpeakStream(httpTts, speakText)
+                            getSpeakStream(httpTts, speakText, voice, emotionTag)
                         }
                     }.onFailure {
                         when (it) {
@@ -1343,14 +1377,23 @@ class HttpReadAloudService : BaseReadAloudService(),
 
     private suspend fun getSpeakStream(
         httpTts: HttpTTS,
-        speakText: String
+        speakText: String,
+        voice: ReadAloudVoice? = null,
+        emotionTag: String = ""
     ): InputStream? {
+        // 没走角色路由时 toneID 是空的，此时连名字一起留空：默认行的 displayName
+        // 是引擎名（比如「1.百度」），把它当音色名传给源脚本没有意义
+        val toneId = voice?.speakerId.orEmpty()
+        val speakerName = if (toneId.isBlank()) "" else voice?.displayName.orEmpty()
         while (true) {
             try {
                 val analyzeUrl = AnalyzeUrl(
                     httpTts.url,
                     speakText = speakText,
                     speakSpeed = (httpTts.speed ?: DEFAULT_TTS_SPEED) + 5,
+                    currentToneID = toneId,
+                    currentSpeakerName = speakerName,
+                    currentEmotionTag = emotionTag,
                     source = httpTts,
                     readTimeout = 300 * 1000L,
                     coroutineContext = currentCoroutineContext()
@@ -1464,12 +1507,30 @@ class HttpReadAloudService : BaseReadAloudService(),
                         "${CloudTtsRoleInstructionMapper.VERSION}:" +
                         cueRoleType.storageValue
 
-            else -> {
-                val itemHttpTts = routedVoice.engineId.toLongOrNull()
-                    ?.let(appDb.httpTTSDao::get) ?: httpTts
-                itemHttpTts.url
-            }
+            else -> httpSourceKey(routedVoice, cueEmotion, httpTts)
         }
+    }
+
+    /**
+     * HTTP 源的缓存键。
+     *
+     * 必须带上音色与情绪：`currentToneID` 这些变量会拼进 URL，只认 URL 的话
+     * 同一句换角色会命中上一句用别的音色合成好的缓存。
+     */
+    private fun httpSourceKey(
+        routedVoice: ReadAloudVoice,
+        cueEmotion: String,
+        httpTts: HttpTTS,
+    ): String {
+        val itemHttpTts = routedVoice.engineId.toLongOrNull()
+            ?.let(appDb.httpTTSDao::get) ?: httpTts
+        // 没走角色路由时保持原来的键：否则升级后所有单音色缓存/下载都对不上，
+        // 用户会白白重合成一遍整本书。
+        if (routedVoice.speakerId.isBlank() && cueEmotion.isBlank()) {
+            return itemHttpTts.url
+        }
+        return "http:${routedVoice.id}:${routedVoice.revision}:" +
+                "${routedVoice.speakerId}:$cueEmotion:${itemHttpTts.url}"
     }
 
     private fun voiceForCue(
@@ -1500,26 +1561,32 @@ class HttpReadAloudService : BaseReadAloudService(),
         ).voice!!
     }
 
-    private fun httpTtsForCue(index: Int, default: HttpTTS): HttpTTS {
-        return httpTtsForCue(playbackQueue, index, default)
+    /** 流式路径用的角色路由结果：带音色 id，合成时要传给源脚本。 */
+    private fun httpVoiceForCue(index: Int, default: HttpTTS): ReadAloudVoice {
+        return httpVoiceForCue(playbackQueue, index, default)
     }
 
-    private fun httpTtsForCue(
+    private fun httpVoiceForCue(
         queue: ReadAloudPlaybackQueue,
         index: Int,
         default: HttpTTS,
-    ): HttpTTS {
-        val cue = queue.cues.getOrNull(index) ?: return default
-        val routed = SpeechVoiceRouter.route(
+    ): ReadAloudVoice {
+        val fallback = ReadAloudVoice(
+            id = "runtime-http:${default.id}",
+            engineType = ReadAloudVoice.ENGINE_HTTP,
+            engineId = default.id.toString(),
+            speakerId = "",
+            displayName = default.name,
+        )
+        val cue = queue.cues.getOrNull(index) ?: return fallback
+        return SpeechVoiceRouter.route(
             cue = cue,
             supportedEngineTypes = setOf(ReadAloudVoice.ENGINE_HTTP),
             defaultRoute = SpeechEngineRoute(
                 engineType = ReadAloudVoice.ENGINE_HTTP,
                 engineId = default.id.toString(),
             ),
-        ).voice ?: return default
-        val id = routed.engineId.toLongOrNull() ?: return default
-        return appDb.httpTTSDao.get(id) ?: default
+        ).voice ?: fallback
     }
 
     private fun createSilentSound(fileName: String) {
@@ -1546,7 +1613,7 @@ class HttpReadAloudService : BaseReadAloudService(),
      * 写入路径不走这里——清缓存、重新合成永远只落在缓存目录，下载区不会被覆盖。
      */
     private fun speakFileForPlay(name: String): File {
-        return ReadAloudAudioStore.downloadedFile(ReadBook.book?.bookUrl, name)
+        return ReadAloudAudioStore.downloadedFile(bookSession.book?.bookUrl, name)
             ?: getSpeakFileAsMd5(name)
     }
 
