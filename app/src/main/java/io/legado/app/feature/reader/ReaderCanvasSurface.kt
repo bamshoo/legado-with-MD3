@@ -364,10 +364,12 @@ fun ReaderCanvasSurface(
     val scrollOffsetState = remember { mutableFloatStateOf(0f) }
     var scrollOffset by scrollOffsetState
     val latestVisibleBodyTextPosition by rememberUpdatedState {
+        // 滚动模式要按当前滚动偏移算「屏幕上第一行」；翻页模式整页就是可见内容，
+        // 取当前页第一条正文。两条都必须给值，否则点朗读只能退回按 durChapterPos 反查页码。
         if (transitionMode == ReaderTransitionMode.SCROLL) {
             ReaderVisibleTextPositionPolicy.firstVisibleBodyText(currentPageWindow(), scrollOffset)
         } else {
-            null
+            ReaderVisibleTextPositionPolicy.firstBodyTextOfCurrentPage(currentPageWindow())
         }
     }
     DisposableEffect(onVisibleBodyTextPositionProvider) {
@@ -1258,7 +1260,7 @@ fun ReaderCanvasSurface(
                             scrollDrag = transitionMode == ReaderTransitionMode.SCROLL &&
                                     ReaderMainAxisPolicy.isVerticalDominant(total.x, total.y)
                             horizontalTurn = !bookmarkDrag && !scrollDrag &&
-                                    ReaderMainAxisPolicy.isHorizontalDominant(total.x, total.y)
+                                    ReaderMainAxisPolicy.canStartPageTurn(total.x, transitionMode)
                             if (horizontalTurn) {
                                 horizontalDrag = ReaderHorizontalDrag.capture(total.x)
                                 horizontalCapturedY = change.position.y
@@ -1287,7 +1289,7 @@ fun ReaderCanvasSurface(
                                 bookmarkArmed = false
                                 bookmarkOffset = 0f
                                 horizontalTurn =
-                                    ReaderMainAxisPolicy.isHorizontalDominant(total.x, total.y)
+                                    ReaderMainAxisPolicy.canStartPageTurn(total.x, transitionMode)
                                 if (horizontalTurn) {
                                     horizontalDrag = ReaderHorizontalDrag.capture(total.x)
                                     horizontalCapturedY = change.position.y
@@ -1520,9 +1522,8 @@ fun ReaderCanvasSurface(
                     // 否则相邻页气泡滑入时仍按上一窗的外沿截断。
                     val contentClip = currentPageWindow().contentClipRect()
                         ?: return@drawWithContent
-                    // 外扩阴影/斜体溢出，对照旧 View 的 ChapterProvider.visibleRect；
-                    // 但九宫格气泡与放大过的背景图本来就要画到内容框之外，裁剪必须跟着它们走，
-                    // 否则气泡会在滚动模式的视口边沿被切掉。
+                    // 对照旧 View 的固定 visibleRect：上下只留字形余量，防止邻页/气泡
+                    // 撑开正文边距；左右仍容纳九宫格气泡，避免把两侧边条裁成平口。
                     clipRect(
                         left = contentClip.left,
                         top = contentClip.top,
@@ -3082,8 +3083,8 @@ internal fun shouldDrawReaderBookmarkBadge(
  * 高亮规则编辑页的预览共用这一份，预览才会和正文一模一样。
  *
  * 背景用的画笔不许开抗锯齿：九宫格九条边落在半像素上时，相邻两格各画一条半覆盖的边，
- * source-over 合成不出满覆盖，气泡上就留下一条透出页面背景的笔直「切割线」。关掉之后每
- * 个像素只被一格完整盖住。四周边缘的形状由图自身的 alpha 决定，与这条边的抗锯齿无关。
+ * source-over 合成不出满覆盖，气泡上就留下一条透出页面背景的笔直「切割线」。九宫格还要按
+ * 每格的目标范围裁剪，避免补缝用的外扩区域重复叠加半透明像素。四周形状由图自身的 alpha 决定。
  */
 internal fun drawTextBackground(
     canvas: android.graphics.Canvas,
@@ -3166,17 +3167,26 @@ private fun drawNineSliceBackground(
         ReaderRect(frame.left, frame.top, frame.right, frame.bottom),
         image,
     ).forEach { cell ->
-        canvas.drawBitmap(
-            bitmap,
-            android.graphics.Rect(cell.source.left, cell.source.top, cell.source.right, cell.source.bottom),
-            android.graphics.RectF(
-                cell.painted.left,
-                cell.painted.top,
-                cell.painted.right,
-                cell.painted.bottom,
-            ),
-            paint,
-        )
+        val saveCount = canvas.save()
+        try {
+            // 外扩只负责盖到切分边界，最终每个像素仍归一格所有；否则半透明图的接缝会叠深。
+            canvas.clipRect(
+                cell.destination.left, cell.destination.top, cell.destination.right, cell.destination.bottom,
+            )
+            canvas.drawBitmap(
+                bitmap,
+                android.graphics.Rect(cell.source.left, cell.source.top, cell.source.right, cell.source.bottom),
+                android.graphics.RectF(
+                    cell.painted.left,
+                    cell.painted.top,
+                    cell.painted.right,
+                    cell.painted.bottom,
+                ),
+                paint,
+            )
+        } finally {
+            canvas.restoreToCount(saveCount)
+        }
     }
 }
 

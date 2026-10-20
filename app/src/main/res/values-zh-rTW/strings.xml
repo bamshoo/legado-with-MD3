@@ -176,6 +176,7 @@
     <string name="pause">暫停</string>
     <string name="resume">繼續</string>
     <string name="set_timer">定時</string>
+    <string name="timer_preset_duration">快捷預設</string>
     <string name="read_aloud_pause">朗讀暫停</string>
     <string name="read_aloud_timer">正在朗讀(還剩%d分鐘)</string>
     <string name="playing_timer">正在播放(還剩%d分鐘)</string>
@@ -2423,9 +2424,15 @@
     <string name="show_all_synopsis">顯示全部簡介</string>
     <string name="show_lines_synopsis">顯示 %1$d 行簡介</string>
     <string name="show_tags">顯示標籤</string>
+    <string name="bookshelf_tag_content">標籤顯示內容</string>
+    <string name="bookshelf_tag_custom">使用者標籤</string>
+    <string name="bookshelf_tag_word_count">字數</string>
+    <string name="bookshelf_tag_none">未選擇顯示內容</string>
     <string name="custom_tag_colors">自訂標籤顏色</string>
     <string name="manage_tag_colors">管理標籤顏色</string>
     <string name="search_filter_first">搜尋按鈕優先開啟搜尋頁面</string>
+    <string name="bookshelf_filter">篩選書架</string>
+    <string name="bookshelf_search_button_hint">開啟：點擊搜尋，長按篩選；關閉：點擊篩選，長按搜尋。</string>
     <string name="import_from_network">從網路匯入</string>
     <string name="input_url_or_json_hint">輸入 URL 或 JSON</string>
     <string name="history_label">歷史記錄：</string>
@@ -3046,4 +3053,9 @@
     <string name="explore_select_source">選擇發現書源</string>
     <string name="cast_bubble_menu">設定氣泡</string>
     <string name="cast_bubble_clear">不設氣泡</string>
+    <string name="background_battery_optimization_title">背景保活與電池最佳化</string>
+    <string name="background_battery_optimization_summary">設定無限制背景執行與自啟動，避免切背景或鎖定螢幕時朗讀/服務被系統終止</string>
+    <string name="battery_optimization_dialog_title">背景保活與省電策略設定指引</string>
+    <string name="battery_optimization_status_ignored">已開啟無限制（點擊可檢查廠商背景策略）</string>
+    <string name="battery_optimization_status_not_ignored">未開啟無限制，背景可能被系統終止</string>
 </resources>

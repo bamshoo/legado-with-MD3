@@ -1,5 +1,4 @@
 package io.legado.app.ui.main
-import io.legado.app.model.ReadBook
 
 import android.app.Activity
 import android.content.Intent
@@ -56,9 +55,9 @@ import io.legado.app.help.coil.CoverExtras
 import io.legado.app.model.AudioPlay
 import io.legado.app.model.Download
 import io.legado.app.model.ReadAloudSessionStore
+import io.legado.app.model.ReadBook
 import io.legado.app.model.SourceCallBack
 import io.legado.app.service.AudioPlayService
-import io.legado.app.service.BaseReadAloudService
 import io.legado.app.ui.about.AboutEffect
 import io.legado.app.ui.about.AboutScreen
 import io.legado.app.ui.about.AboutViewModel
@@ -200,7 +199,7 @@ import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
 
 /**
- * WebView 类页面（内置浏览器、订阅阅读）只做位移转场。
+ * 订阅阅读页只做位移转场；内置浏览器使用宿主的通用 Nav3 转场。
  *
  * WebView 是 AndroidView interop view：所在子树一旦被加上 graphicsLayer（fade 的 alpha、
  * scaleOut 的缩放），Compose 会把网页一并画进离屏 RenderNode
@@ -415,9 +414,7 @@ fun MainActivity.mainEntryProvider(
             onSaveSuccess = { closeBookPage(backStack, route) },
         )
     }
-    entry<MainRouteWebView>(
-        metadata = webViewEntryMetadata(configuration.appShell.predictiveBackEnabled)
-    ) { route ->
+    entry<MainRouteWebView> { route ->
         val viewModel = koinViewModel<WebViewModel>(
             key = "WebView:${route.url}:${route.sourceOrigin}:${route.sourceVerificationEnable}",
         )
@@ -497,7 +494,11 @@ fun MainActivity.mainEntryProvider(
                         )
                     }
                     this@mainEntryProvider.finish()
-                } else onNavigateBack()
+                } else closeBookPage(
+                    backStack,
+                    route,
+                    savedSourceUrl?.let { BookPageResult.SourceEdited(it) },
+                )
             },
             onLogin = {
                 onNavigateToRoute(MainRouteSourceLogin(SourceLoginType.BookSource, it))
@@ -979,6 +980,9 @@ fun MainActivity.mainEntryProvider(
                         ReadBookIntent.TocRegexResult(result.rule)
                     )
 
+                    is BookPageResult.SourceEdited -> readBookViewModel.onIntent(
+                        ReadBookIntent.SourceEditResult(result.sourceUrl)
+                    )
                     BookPageResult.RulesClosed -> readBookViewModel.onIntent(ReadBookIntent.ReplaceRuleResult)
                     else -> Unit
                 }
@@ -1028,7 +1032,9 @@ fun MainActivity.mainEntryProvider(
                 readerSessionViewModel = readerSessionViewModel,
                 host = controller,
                 controller = controller,
-                sharedTransitionScope = sharedTransitionScope,
+                sharedTransitionScope = sharedTransitionScope.takeIf {
+                    configuration.appShell.readerSharedElementEnabled
+                },
                 animatedVisibilityScope = LocalNavAnimatedContentScope.current,
                 sharedCoverKey = route.sharedCoverKey,
                 isTopRoute = (backStack.lastOrNull() as? MainRouteReadBook)?.let {
@@ -1074,6 +1080,9 @@ fun MainActivity.mainEntryProvider(
                 },
                 onOpenTtsCache = {
                     onNavigateToRoute(MainRouteTtsCache)
+                },
+                onOpenSourceEdit = { sourceUrl ->
+                    onNavigateToRoute(MainRouteBookSourceEdit(sourceUrl))
                 },
                 onNavigateBack = {
                     MainNavigator.navigateBack(
@@ -1172,7 +1181,9 @@ fun MainActivity.mainEntryProvider(
             viewModel = mangaViewModel,
             onOpenToc = { bookUrl, page -> onNavigateToRoute(MainRouteToc(bookUrl, page)) },
             restoreSystemBarsVisible = configuration.appShell.showStatusBar,
-            sharedTransitionScope = sharedTransitionScope,
+            sharedTransitionScope = sharedTransitionScope.takeIf {
+                configuration.appShell.readerSharedElementEnabled
+            },
             animatedVisibilityScope = LocalNavAnimatedContentScope.current,
             sharedCoverKey = route.sharedCoverKey,
             isTopRoute = backStack.lastOrNull() == route,
