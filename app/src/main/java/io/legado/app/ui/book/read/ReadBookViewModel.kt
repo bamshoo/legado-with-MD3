@@ -805,7 +805,6 @@ class ReadBookViewModel(
             is ReadBookIntent.SwitchReadMenuRoute -> _uiState.update {
                 it.withMenuRoute(intent.route, replaceTop = true)
             }
-
             is ReadBookIntent.OpenReadMenuRoute -> _uiState.update {
                 it.withMenuRoute(intent.route)
             }
