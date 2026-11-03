@@ -66,6 +66,7 @@ import io.legado.app.help.storage.Backup
 import io.legado.app.lib.dialogs.SelectItem
 import io.legado.app.model.CacheBook
 import io.legado.app.model.ImageProvider
+import io.legado.app.model.ParagraphBubbleRenderer
 import io.legado.app.model.ReadAloud
 import io.legado.app.model.ReadBook
 import io.legado.app.model.ReadSessionState
@@ -73,11 +74,12 @@ import io.legado.app.model.analyzeRule.AnalyzeRule
 import io.legado.app.model.analyzeRule.AnalyzeRule.Companion.setChapter
 import io.legado.app.model.analyzeRule.AnalyzeRule.Companion.setCoroutineContext
 import io.legado.app.model.analyzeRule.AnalyzeUrl.Companion.paramPattern
+import io.legado.app.model.localBook.LocalBookSemanticHtml
+import io.legado.app.help.book.isLocal
 import io.legado.app.model.reader.ReaderChapterInput
 import io.legado.app.receiver.NetworkChangedListener
 import io.legado.app.receiver.TimeBatteryReceiver
 import io.legado.app.service.BaseReadAloudService
-import io.legado.app.ui.association.OpenUrlConfirmActivity
 import io.legado.app.ui.book.read.page.entities.PageDirection
 import io.legado.app.ui.login.SourceLoginJsExtensions
 import io.legado.app.ui.widget.PopupAction
@@ -157,7 +159,7 @@ class ReadBookController(
         pageChanged = false
     }
 
-    private val readerImageCache = object : LruCache<String, android.graphics.Bitmap>(32 * 1024 * 1024) {
+    private val readerImageCache = object : LruCache<String, android.graphics.Bitmap>(READER_IMAGE_CACHE_BASE_BYTES) {
         override fun sizeOf(key: String, value: android.graphics.Bitmap): Int = value.allocationByteCount
     }
     private val readerImageLoads = ConcurrentHashMap<String, Deferred<android.graphics.Bitmap?>>()
@@ -165,6 +167,54 @@ class ReadBookController(
     private var readerImageLoadJob = SupervisorJob()
     private val readerImageRefreshMutex = Mutex()
     private var readerChapterInputPublishJob: Job? = null
+
+    /**
+     * 图片缓存容量上限，取堆上限的四分之一（并夹在固定上限内）。
+     *
+     * 大图 epub 一张 2048×1516 的图解码后约 12MB，滚动模式窗口内的四页必须同时留在缓存里，
+     * 32MB 的固定容量会被反复穿透。上限只是"允许的上界"，不预分配内存。
+     */
+    private val readerImageCacheLimitBytes: Int by lazy {
+        val heapBudget = (Runtime.getRuntime().maxMemory() / 4)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+        minOf(READER_IMAGE_CACHE_MAX_BYTES, heapBudget).coerceAtLeast(READER_IMAGE_CACHE_BASE_BYTES)
+    }
+
+    /**
+     * 按窗口内图片调整缓存容量：一次绘制记录会画完窗口四页，任何一张被淘汰就只能画回
+     * 灰占位（#2547）。只增不减——`LruCache.maxSize` 变大不会立即占内存，缩回反而让
+     * 下一次换窗再抖一遍。
+     */
+    private fun ensureReaderImageCacheCapacity(window: ReaderPageWindow) {
+        val windowImageBounds = listOfNotNull(
+            window.previous,
+            window.current,
+            window.next,
+            window.nextPlus,
+        ).asSequence()
+            .flatMap { page -> page.elements.asSequence().filterIsInstance<ReaderElement.Image>() }
+            // 同一 source 在 ImageProvider 里只解码一份，按 source 去重才不会重复计账
+            .distinctBy(ReaderElement.Image::source)
+            .map(ReaderElement.Image::bounds)
+            .toList()
+        val target = ReaderImageCachePolicy.targetCapacityBytes(
+            windowImageBounds = windowImageBounds,
+            baseBytes = READER_IMAGE_CACHE_BASE_BYTES,
+            limitBytes = readerImageCacheLimitBytes,
+        )
+        if (target > readerImageCache.maxSize()) {
+            readerImageCache.resize(target)
+        }
+    }
+
+    private companion object {
+        /** 基础容量：纯文字章节不该因为"阅读器缓存"就占住大内存。 */
+        const val READER_IMAGE_CACHE_BASE_BYTES = 32 * 1024 * 1024
+
+        /** 自适应扩容的硬上限；`LruCache.maxSize` 只是上界，不预分配。 */
+        const val READER_IMAGE_CACHE_MAX_BYTES = 128 * 1024 * 1024
+    }
 
     private fun readerImageCacheKey(
         element: ReaderElement.Image,
@@ -415,8 +465,13 @@ class ReadBookController(
 
     private fun directReaderPageContext(index: Int): ReaderPageContext? {
         val page = directReaderPages.getOrNull(index) ?: return null
+        val input = ReadBook.readerChapterInputFor(page.id.chapterIndex) ?: return null
+        val owner = if (page.id.chapterIndex in directReaderStreamingChapters) {
+            readerChapterPaginationJobs[page.id.chapterIndex]?.identity
+        } else paginatedChapterIdentities[page.id.chapterIndex]
+        if (owner != null && owner.sourceHash != input.sourceHash) return null
         return directReaderPageContexts.getOrPut(page.id) {
-            ReaderPageNavigator.pageContext(directReaderPages, index) ?: return null
+            ReaderPageNavigator.pageContext(directReaderPages, index, input.source.semanticContent) ?: return null
         }
     }
     private var directReaderChapterPageCounts = emptyMap<Int, Int>()
@@ -535,6 +590,7 @@ class ReadBookController(
         if (previous?.id != next?.id || previous?.layoutRevision != next?.layoutRevision) {
             cancelReaderImageLoadsExcept(activeReaderImageKeys(value))
         }
+        ensureReaderImageCacheCapacity(value)
         _readerPageWindow.value = value
         readerSessionViewModel.submitPageWindow(value)
         return value
@@ -592,7 +648,7 @@ class ReadBookController(
         is ReaderElement.Text -> when {
             element.markingId != null -> { onMarkingClick(element.markingId); true }
             element.link != null -> {
-                activity.startActivity(Intent(activity, OpenUrlConfirmActivity::class.java).putExtra("uri", element.link))
+                handleComposeLinkClick(element.link)
                 true
             }
             else -> false
@@ -615,6 +671,21 @@ class ReadBookController(
         is ReaderElement.Spacer -> false
         is ReaderElement.ParagraphMarker -> false
         is ReaderElement.Rule -> false
+    }
+
+    private fun handleComposeLinkClick(rawLink: String) {
+        val book = ReadBook.book ?: return
+        val link = LocalBookSemanticHtml.resolveReaderLink(rawLink, book.isLocal,
+            ReadBook.readerChapterInputWindow.current?.chapter?.url.orEmpty()) ?: return
+        if (LocalBookSemanticHtml.isExternalLink(link)) {
+            viewModel.onIntent(
+                ReadBookIntent.ShowDialog(ReadBookDialog.ConfirmOpenExternalUrl(if (link.startsWith("//")) "https:$link" else link))
+            )
+            return
+        }
+        if (LocalBookSemanticHtml.classifyLink(link) == LocalBookSemanticHtml.LinkKind.INTERNAL) {
+            viewModel.openInternalBookLink(link)
+        }
     }
 
     fun onComposeReaderElementLongPress(element: ReaderElement, x: Float, y: Float): Boolean {
@@ -677,7 +748,14 @@ class ReadBookController(
         composeImageClickAt = now
         composeImageDoubleClick = if (debounce) !composeImageDoubleClick else false
         return when (readSettingsGateway.currentSettings.clickImgWay) {
-            "1" -> { viewModel.onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.Photo(image.source))); true }
+            // 气泡没有磁盘文件，放进大图预览只会是一张错误占位图：有动作就执行动作，否则吞掉点击
+            "1" -> if (ParagraphBubbleRenderer.isBubbleSrc(image.source)) {
+                image.action?.takeIf(String::isNotBlank)?.let { clickImg(it, image.source) }
+                true
+            } else {
+                viewModel.onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.Photo(image.source)))
+                true
+            }
             "2" -> if (!debounce && ReadBook.book?.isOnLineTxt == true) {
                 image.action?.takeIf(String::isNotBlank)?.let { clickImg(it, image.source); true }
                     ?: oldClickImg(image.source)
@@ -2126,7 +2204,7 @@ class ReadBookController(
         // 选区含标题时 bodyStart 会被压成 0，落不到正确的段上，直接判不可用
         val bodyStart = selection?.bodyStart?.takeIf { !selection.includesTitle }
         val positions = ReadBook.readerChapterInputWindow.current?.source
-            ?.let { BgmSceneStore.positionsToOrdinals(it.semanticContent) }
+            ?.let { BgmSceneStore.positionsToOrdinals(it) }
             .orEmpty()
         var ordinal = -1
         if (bodyStart != null) {

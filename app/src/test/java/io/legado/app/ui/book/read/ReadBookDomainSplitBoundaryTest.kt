@@ -117,7 +117,17 @@ class ReadBookDomainSplitBoundaryTest {
      * 行数只作粗棘轮：散落在 VM 的域内状态比总行数更能说明边界是否干净，各域另受
      * `域状态不回流进 ReadBookViewModel` 守卫约束。
      *
-     * 当前上限 2750：由 2748 放宽 2 行——`syncFromReadBook` 投影表加 `chapterPayable`
+     * 当前上限 2750：合并 origin/main 后回落到本分支的严格档，未借用 main 的 2763。
+     * main 记账的 +13 行接线全部保留：
+     * - 本地富文本链接导航（#2521）：`openInternalBookLink` 一行转发
+     *   （Screen 的意图入口只能在 VM；目标解析与跳转本体在
+     *   `ReadBookmarkNavigateDelegate.navigateToInternalLink`，不占 VM 行）；
+     * - 长按重新翻译（#2526）：`retranslateCurrentChapter()` 的任务占位拦截与状态更新
+     *   （`_effects` / `_uiState` 只有 VM 能碰，占位判定本体在 `TranslationManager`）。
+     * 行数改由把三个顶层纯函数（`readStyleExportFileName`、`coerceSearchResultIndex`、
+     * `isHttpTtsImportUri`）摘到 `ReadBookViewModelHelpers.kt` 抵消（净 -20），不回抬棘轮。
+     * 回溯（上一档 2763）：由 2750 放宽 13 行，只抬数字、不摘 delegate。
+     * 回溯（上一档 2750）：由 2748 放宽 2 行——`syncFromReadBook` 投影表加 `chapterPayable`
      *   （+1，一个字段一行；判定本体在 `ReaderChapterInput.isPayable`，不占 VM 行）
      *   及其 import（+1）。
      * 回溯（上一档 2748）：2026-10 由 2745 放宽 3 行，两条新增都属本注释已列出的合法接线，

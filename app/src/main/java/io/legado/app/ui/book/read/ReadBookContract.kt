@@ -543,6 +543,7 @@ internal val ReadBookButtonIds = listOf(
     "multi_role_cast",
     "cast_table",
     "ai_cast",
+    "bubble_style",
 )
 
 internal val MoreActionIds = listOf(
@@ -552,7 +553,7 @@ internal val MoreActionIds = listOf(
     "text_processing", "reverse_content", "re_segment",
     "del_ruby", "del_h", "toc_rule", "charset", "image_style", "page_anim",
     "simulated_reading", "get_progress", "cover_progress", "highlight_rule", "read_style",
-    "bottom_button_config", "log",
+    "bubble_style", "bottom_button_config", "log",
 )
 
 @Immutable
@@ -1340,6 +1341,10 @@ sealed interface ReadBookSheet {
     data object HighlightRuleConfig : ReadBookSheet
     data object Marking : ReadBookSheet
     data object MoreConfig : ReadBookSheet
+
+    /** 段评气泡快速切换。 */
+    data object BubbleStyle : ReadBookSheet
+
     data object TextSelectMenuConfig : ReadBookSheet
     data object BgTextConfig : ReadBookSheet
     data object ReadAloudConfig : ReadBookSheet
@@ -1375,6 +1380,8 @@ sealed interface ReadBookDialog {
     data object ConfirmSkipToChapter : ReadBookDialog
     data class ConfirmChapterPay(val chapterTitle: String) : ReadBookDialog
     data class ConfirmAddToBookshelf(val bookName: String) : ReadBookDialog
+    data class ConfirmOpenExternalUrl(val url: String) : ReadBookDialog
+    data object ConfirmRetranslate : ReadBookDialog
 }
 
 /**

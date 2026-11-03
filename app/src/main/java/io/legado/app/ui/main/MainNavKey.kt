@@ -80,6 +80,9 @@ data object MainRouteSettingsOther : MainRoute
 data object MainRouteSettingsRead : MainRoute
 
 @Serializable
+data class MainRouteSettingsManga(val openTranslation: Boolean = false) : MainRoute
+
+@Serializable
 data object MainRouteSettingsCover : MainRoute
 
 @Serializable
@@ -127,6 +130,9 @@ data object MainRouteSettingsCustomTheme : MainRoute
 data object MainRouteSettingsThemeManage : MainRoute
 
 @Serializable
+data object MainRouteSettingsBubble : MainRoute
+
+@Serializable
 data object MainRouteSettingsPrivate : MainRoute
 
 @Serializable
@@ -157,6 +163,9 @@ data class MainRouteCache(val groupId: Long) : MainRoute
 data object MainRouteBookCacheManage : MainRoute
 
 @Serializable
+data object MainRouteCacheMaintenance : MainRoute
+
+@Serializable
 data class MainRouteReadBook(
     val bookUrl: String? = null,
     val readAloud: Boolean = false,
@@ -180,6 +189,17 @@ data class MainRouteAudioPlay(
     val bookUrl: String? = null,
     val inBookshelf: Boolean = true,
     val sharedCoverKey: String? = null,
+) : MainRoute
+
+@Serializable
+data class MainRouteVideoPlay(
+    val bookUrl: String? = null,
+    val inBookshelf: Boolean = true,
+    /** RSS 文章里的视频：从阅读页进入时只带定位信息，正文由会话按规则重新解析。 */
+    val rssOrigin: String? = null,
+    val rssLink: String? = null,
+    val rssSort: String? = null,
+    val rssTitle: String? = null,
 ) : MainRoute
 
 @Serializable
@@ -259,6 +279,8 @@ data class MainRouteExploreShow(
     val title: String?,
     val sourceUrl: String,
     val exploreUrl: String?,
+    /** 仅详情页标签跳转的运行时地址启用；书源规则入口保持原有解析。 */
+    val usePageParamFallback: Boolean = false,
 ) : MainRoute
 
 @Serializable
@@ -328,6 +350,9 @@ data object MainRouteRegexCastRule : MainRoute
 @Serializable
 data object MainRouteAbout : MainRoute
 
+@Serializable
+data object MainRouteThirdPartyLicenses : MainRoute
+
 /** 朗读设置卡片里的子页跳转：把 [ReadAloudSubPage] 映射到对应整屏路由。 */
 fun ReadAloudSubPage.toMainRoute(): MainRoute = when (this) {
     ReadAloudSubPage.VoicePool -> MainRouteVoicePool
@@ -348,6 +373,7 @@ object MainRouteConst {
     const val ROUTE_SETTINGS = "settings"
     const val ROUTE_SETTINGS_OTHER = "settings/other"
     const val ROUTE_SETTINGS_READ = "settings/read"
+    const val ROUTE_SETTINGS_MANGA = "settings/manga"
     const val ROUTE_SETTINGS_COVER = "settings/cover"
     const val ROUTE_SETTINGS_COVER_ALBUMS = "settings/cover/albums"
     const val ROUTE_SETTINGS_THEME = "settings/theme"
@@ -357,6 +383,7 @@ object MainRouteConst {
     const val ROUTE_SETTINGS_AI_PROMPT = "settings/ai/prompt"
     const val ROUTE_AI_CHAT = "ai/chat"
     const val ROUTE_SETTINGS_CUSTOM_THEME = "settings/custom_theme"
+    const val ROUTE_SETTINGS_BUBBLE = "settings/bubble"
     const val ROUTE_SETTINGS_PRIVATE = "settings/private"
     const val ROUTE_SETTINGS_LAB_CONFIG = "settings/lab_config"
     const val ROUTE_SETTINGS_DOWNLOAD_CACHE = "settings/download_cache"
@@ -368,6 +395,7 @@ object MainRouteConst {
     const val ROUTE_READ_BOOK = "book/read"
     const val ROUTE_READ_MANGA = "book/read/manga"
     const val ROUTE_AUDIO_PLAY = "book/read/audio"
+    const val ROUTE_VIDEO_PLAY = "book/read/video"
     const val ROUTE_SEARCH = "search"
     const val ROUTE_SEARCH_CONTENT = "book/searchContent"
     const val ROUTE_BOOK_INFO = "book/info"
